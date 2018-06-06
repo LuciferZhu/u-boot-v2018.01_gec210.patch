@@ -1,0 +1,1520 @@
+index d8f419b..eba41aa
+--- a/Makefile
++++ b/Makefile
+@@ -330,6 +330,7 @@ scripts/Kbuild.include: ;
+ include scripts/Kbuild.include
+ 
+ # Make variables (CC, etc...)
++CROSS_COMPILE	?= /usr/local/arm/gcc-linaro-7.2.1-2017.11-i686_arm-linux-gnueabihf/bin/arm-linux-gnueabihf-
+ 
+ AS		= $(CROSS_COMPILE)as
+ # Always use GNU ld
+index 04acdaa..ba6cd8a
+--- a/arch/arm/mach-s5pc1xx/Kconfig
++++ b/arch/arm/mach-s5pc1xx/Kconfig
+@@ -12,6 +12,10 @@ config TARGET_SMDKC100
+ 	bool "Support smdkc100 board"
+ 	select OF_CONTROL
+ 
++config TARGET_GEC210
++	bool "Support gec210 board"
++	select OF_CONTROL
++
+ endchoice
+ 
+ config SYS_SOC
+@@ -19,5 +23,6 @@ config SYS_SOC
+ 
+ source "board/samsung/goni/Kconfig"
+ source "board/samsung/smdkc100/Kconfig"
++source "board/samsung/gec210/Kconfig"
+ 
+ endif
+diff --git a/arch/arm/mach-s5pc1xx/include/mach/boot0.h b/arch/arm/mach-s5pc1xx/include/mach/boot0.h
+new file mode 100755
+index 0000000..1d83920
+--- /dev/null
++++ b/arch/arm/mach-s5pc1xx/include/mach/boot0.h
+@@ -0,0 +1,13 @@
++﻿/*
++ * Copyright 2018 Lucifer Zhu, LuciferZhu@yeah.net.
++ *
++ * SPDX-License-Identifier:	GPL-2.0+
++ */
++
++/* BOOT0 header information */
++	.word 0x4000		@ indicate BL1 size = 16KB
++	.word 0x0
++	.word 0x0
++	.word 0x0
++_start:
++	ARM_VECTORS
+diff --git a/board/samsung/gec210/Kconfig b/board/samsung/gec210/Kconfig
+new file mode 100755
+index 0000000..42776f3
+--- /dev/null
++++ b/board/samsung/gec210/Kconfig
+@@ -0,0 +1,15 @@
++if TARGET_GEC210
++
++config SYS_BOARD
++	default "gec210"
++
++config SYS_VENDOR
++	default "samsung"
++
++config SYS_SOC
++	default "s5pc1xx"
++
++config SYS_CONFIG_NAME
++	default "gec210"
++
++endif
+diff --git a/board/samsung/gec210/MAINTAINERS b/board/samsung/gec210/MAINTAINERS
+new file mode 100755
+index 0000000..a879714
+--- /dev/null
++++ b/board/samsung/gec210/MAINTAINERS
+@@ -0,0 +1,6 @@
++GEC210 BOARD
++M:	Lucifer Zhu <LuciferZhu@yeah.net>
++S:	Maintained
++F:	board/samsung/gec210/
++F:	include/configs/gec210.h
++F:	configs/gec210_defconfig
+diff --git a/board/samsung/gec210/Makefile b/board/samsung/gec210/Makefile
+new file mode 100755
+index 0000000..9844f3b
+--- /dev/null
++++ b/board/samsung/gec210/Makefile
+@@ -0,0 +1,13 @@
++#
++# (C) Copyright 2000, 2001, 2002
++# Wolfgang Denk, DENX Software Engineering, wd@denx.de.
++#
++# (C) Copyright 2008
++# Guennadi Liakhovetki, DENX Software Engineering, <lg@denx.de>
++#
++# SPDX-License-Identifier:	GPL-2.0+
++#
++
++obj-y	:= gec210.o
++obj-$(CONFIG_SAMSUNG_ONENAND)	+= onenand.o
++obj-y	+= lowlevel_init.o
+diff --git a/board/samsung/gec210/gec210.c b/board/samsung/gec210/gec210.c
+new file mode 100755
+index 0000000..5d23844
+--- /dev/null
++++ b/board/samsung/gec210/gec210.c
+@@ -0,0 +1,78 @@
++/*
++ *  Copyright (C) 2008-2009 Samsung Electronics
++ *  Minkyu Kang <mk7.kang@samsung.com>
++ *  Kyungmin Park <kyungmin.park@samsung.com>
++ *
++ * SPDX-License-Identifier:	GPL-2.0+
++ */
++
++#include <common.h>
++#include <asm/gpio.h>
++#include <asm/io.h>
++#include <asm/arch/sromc.h>
++#include <netdev.h>
++#include <asm/mach-types.h>
++
++DECLARE_GLOBAL_DATA_PTR;
++
++/*
++ * Miscellaneous platform dependent initialisations
++ */
++static void smc9115_pre_init(void)
++{
++	u32 smc_bw_conf, smc_bc_conf;
++
++	/* gpio configuration GPK0CON */
++	gpio_cfg_pin(S5PC100_GPIO_K00 + CONFIG_ENV_SROM_BANK, S5P_GPIO_FUNC(2));
++
++	/* Ethernet needs bus width of 16 bits */
++	smc_bw_conf = SMC_DATA16_WIDTH(CONFIG_ENV_SROM_BANK);
++	smc_bc_conf = SMC_BC_TACS(0x0) | SMC_BC_TCOS(0x4) | SMC_BC_TACC(0xe)
++			| SMC_BC_TCOH(0x1) | SMC_BC_TAH(0x4)
++			| SMC_BC_TACP(0x6) | SMC_BC_PMC(0x0);
++
++	/* Select and configure the SROMC bank */
++	s5p_config_sromc(CONFIG_ENV_SROM_BANK, smc_bw_conf, smc_bc_conf);
++}
++
++int board_init(void)
++{
++	smc9115_pre_init();
++
++	gd->bd->bi_arch_number = MACH_TYPE_SMDKC100;
++	gd->bd->bi_boot_params = PHYS_SDRAM_1 + 0x100;
++
++	return 0;
++}
++
++int dram_init(void)
++{
++	gd->ram_size = get_ram_size((long *)PHYS_SDRAM_1, PHYS_SDRAM_1_SIZE);
++
++	return 0;
++}
++
++int dram_init_banksize(void)
++{
++	gd->bd->bi_dram[0].start = PHYS_SDRAM_1;
++	gd->bd->bi_dram[0].size = PHYS_SDRAM_1_SIZE;
++
++	return 0;
++}
++
++#ifdef CONFIG_DISPLAY_BOARDINFO
++int checkboard(void)
++{
++	printf("Board:\tSMDKC100\n");
++	return 0;
++}
++#endif
++
++int board_eth_init(bd_t *bis)
++{
++	int rc = 0;
++#ifdef CONFIG_SMC911X
++	rc = smc911x_initialize(0, CONFIG_SMC911X_BASE);
++#endif
++	return rc;
++}
+diff --git a/board/samsung/gec210/lowlevel_init.S b/board/samsung/gec210/lowlevel_init.S
+new file mode 100755
+index 0000000..91e5357
+--- /dev/null
++++ b/board/samsung/gec210/lowlevel_init.S
+@@ -0,0 +1,153 @@
++/*
++ * Copyright (C) 2009 Samsung Electronics
++ * Kyungmin Park <kyungmin.park@samsung.com>
++ * Minkyu Kang <mk7.kang@samsung.com>
++ *
++ * SPDX-License-Identifier:	GPL-2.0+
++ */
++
++#include <config.h>
++#include <asm/arch/cpu.h>
++#include <asm/arch/power.h>
++
++/*
++ * Register usages:
++ *
++ * r5 has zero always
++ */
++
++	.globl lowlevel_init
++lowlevel_init:
++	mov	r9, lr
++
++	/* r5 has always zero */
++	mov	r5, #0
++
++	ldr	r8, =S5PC100_GPIO_BASE
++
++	/* Disable Watchdog */
++	ldr	r0, =S5PC100_WATCHDOG_BASE		@0xEA200000
++	orr	r0, r0, #0x0
++	str	r5, [r0]
++
++	/* setting SRAM */
++	ldr	r0, =S5PC100_SROMC_BASE
++	ldr	r1, =0x9
++	str	r1, [r0]
++
++	/* S5PC100 has 3 groups of interrupt sources */
++	ldr	r0, =S5PC100_VIC0_BASE			@0xE4000000
++	ldr	r1, =S5PC100_VIC1_BASE			@0xE4000000
++	ldr	r2, =S5PC100_VIC2_BASE			@0xE4000000
++
++	/* Disable all interrupts (VIC0, VIC1 and VIC2) */
++	mvn	r3, #0x0
++	str	r3, [r0, #0x14]				@INTENCLEAR
++	str	r3, [r1, #0x14]				@INTENCLEAR
++	str	r3, [r2, #0x14]				@INTENCLEAR
++
++	/* Set all interrupts as IRQ */
++	str	r5, [r0, #0xc]				@INTSELECT
++	str	r5, [r1, #0xc]				@INTSELECT
++	str	r5, [r2, #0xc]				@INTSELECT
++
++	/* Pending Interrupt Clear */
++	str	r5, [r0, #0xf00]			@INTADDRESS
++	str	r5, [r1, #0xf00]			@INTADDRESS
++	str	r5, [r2, #0xf00]			@INTADDRESS
++
++	/* for UART */
++	bl uart_asm_init
++
++	/* for TZPC */
++	bl tzpc_asm_init
++
++1:
++	mov	lr, r9
++	mov	pc, lr
++
++/*
++ * system_clock_init: Initialize core clock and bus clock.
++ * void system_clock_init(void)
++ */
++system_clock_init:
++	ldr	r8, =S5PC100_CLOCK_BASE		@ 0xE0100000
++
++	/* Set Clock divider */
++	ldr	r1, =0x00011110
++	str	r1, [r8, #0x304]
++	ldr	r1, =0x1
++	str	r1, [r8, #0x308]
++	ldr	r1, =0x00011301
++	str	r1, [r8, #0x300]
++
++	/* Set Lock Time */
++	ldr	r1, =0xe10			@ Locktime : 0xe10 = 3600
++	str	r1, [r8, #0x000]		@ APLL_LOCK
++	str	r1, [r8, #0x004]		@ MPLL_LOCK
++	str	r1, [r8, #0x008]		@ EPLL_LOCK
++	str	r1, [r8, #0x00C]		@ HPLL_LOCK
++
++	/* APLL_CON */
++	ldr	r1, =0x81bc0400		@ SDIV 0, PDIV 4, MDIV 444 (1332MHz)
++	str	r1, [r8, #0x100]
++	/* MPLL_CON */
++	ldr	r1, =0x80590201		@ SDIV 1, PDIV 2, MDIV 89 (267MHz)
++	str	r1, [r8, #0x104]
++	/* EPLL_CON */
++	ldr	r1, =0x80870303		@ SDIV 3, PDIV 3, MDIV 135 (67.5MHz)
++	str	r1, [r8, #0x108]
++	/* HPLL_CON */
++	ldr	r1, =0x80600603
++	str	r1, [r8, #0x10C]
++
++	/* Set Source Clock */
++	ldr	r1, =0x1111			@ A, M, E, HPLL Muxing
++	str	r1, [r8, #0x200]		@ CLK_SRC0
++
++	ldr	r1, =0x1000001			@ Uart Clock & CLK48M Muxing
++	str	r1, [r8, #0x204]		@ CLK_SRC1
++
++	ldr	r1, =0x9000			@ ARMCLK/4
++	str	r1, [r8, #0x400]		@ CLK_OUT
++
++	/* wait at least 200us to stablize all clock */
++	mov	r2, #0x10000
++1:	subs	r2, r2, #1
++	bne	1b
++
++	mov	pc, lr
++
++/*
++ * uart_asm_init: Initialize UART's pins
++ */
++uart_asm_init:
++	mov	r0, r8
++	ldr	r1, =0x22222222
++	str	r1, [r0, #0x0]			@ GPA0_CON
++	ldr	r1, =0x00022222
++	str	r1, [r0, #0x20]			@ GPA1_CON
++
++	mov	pc, lr
++
++/*
++ * tzpc_asm_init: Initialize TZPC
++ */
++tzpc_asm_init:
++	ldr	r0, =0xE3800000
++	mov	r1, #0x0
++	str	r1, [r0]
++	mov	r1, #0xff
++	str	r1, [r0, #0x804]
++	str	r1, [r0, #0x810]
++
++	ldr	r0, =0xE2800000
++	str	r1, [r0, #0x804]
++	str	r1, [r0, #0x810]
++	str	r1, [r0, #0x81C]
++
++	ldr	r0, =0xE2900000
++	str	r1, [r0, #0x804]
++	str	r1, [r0, #0x810]
++
++	mov	pc, lr
+diff --git a/board/samsung/gec210/onenand.c b/board/samsung/gec210/onenand.c
+new file mode 100755
+index 0000000..994d91d
+--- /dev/null
++++ b/board/samsung/gec210/onenand.c
+@@ -0,0 +1,70 @@
++/*
++ * Copyright (C) 2008-2009 Samsung Electronics
++ * Kyungmin Park <kyungmin.park@samsung.com>
++ *
++ * SPDX-License-Identifier:	GPL-2.0+
++ */
++
++#include <common.h>
++#include <linux/compat.h>
++#include <linux/mtd/mtd.h>
++#include <linux/mtd/onenand.h>
++#include <linux/mtd/samsung_onenand.h>
++
++#include <onenand_uboot.h>
++
++#include <asm/io.h>
++#include <asm/arch/clock.h>
++
++int onenand_board_init(struct mtd_info *mtd)
++{
++	struct onenand_chip *this = mtd->priv;
++	struct s5pc100_clock *clk =
++			(struct s5pc100_clock *)samsung_get_base_clock();
++	struct samsung_onenand *onenand;
++	int value;
++
++	this->base = (void *)S5PC100_ONENAND_BASE;
++	onenand = (struct samsung_onenand *)this->base;
++
++	/* D0 Domain memory clock gating */
++	value = readl(&clk->gate_d01);
++	value &= ~(1 << 2);		/* CLK_ONENANDC */
++	value |= (1 << 2);
++	writel(value, &clk->gate_d01);
++
++	value = readl(&clk->src0);
++	value &= ~(1 << 24);		/* MUX_1nand: 0 from HCLKD0 */
++	value &= ~(1 << 20);		/* MUX_HREF: 0 from FIN_27M */
++	writel(value, &clk->src0);
++
++	value = readl(&clk->div1);
++	value &= ~(3 << 16);		/* PCLKD1_RATIO */
++	value |= (1 << 16);
++	writel(value, &clk->div1);
++
++	writel(ONENAND_MEM_RESET_COLD, &onenand->mem_reset);
++
++	while (!(readl(&onenand->int_err_stat) & RST_CMP))
++		continue;
++
++	writel(RST_CMP, &onenand->int_err_ack);
++
++	/*
++	 * Access_Clock [2:0]
++	 * 166 MHz, 134 Mhz : 3
++	 * 100 Mhz, 60 Mhz  : 2
++	 */
++	writel(0x3, &onenand->acc_clock);
++
++	writel(INT_ERR_ALL, &onenand->int_err_mask);
++	writel(1 << 0, &onenand->int_pin_en);	/* Enable */
++
++	value = readl(&onenand->int_err_mask);
++	value &= ~RDY_ACT;
++	writel(value, &onenand->int_err_mask);
++
++	s3c_onenand_init(mtd);
++
++	return 0;
++}
+diff --git a/configs/gec210_defconfig b/configs/gec210_defconfig
+new file mode 100755
+index 0000000..430144b
+--- /dev/null
++++ b/configs/gec210_defconfig
+@@ -0,0 +1,913 @@
++#
++# Automatically generated file; DO NOT EDIT.
++# U-Boot 2018.01 Configuration
++#
++CONFIG_CREATE_ARCH_SYMLINK=y
++# CONFIG_ARC is not set
++CONFIG_ARM=y
++# CONFIG_M68K is not set
++# CONFIG_MICROBLAZE is not set
++# CONFIG_MIPS is not set
++# CONFIG_NDS32 is not set
++# CONFIG_NIOS2 is not set
++# CONFIG_PPC is not set
++# CONFIG_SANDBOX is not set
++# CONFIG_SH is not set
++# CONFIG_X86 is not set
++# CONFIG_XTENSA is not set
++CONFIG_SYS_ARCH="arm"
++CONFIG_SYS_CPU="armv7"
++CONFIG_SYS_SOC="s5pc1xx"
++CONFIG_SYS_VENDOR="samsung"
++CONFIG_SYS_BOARD="gec210"
++CONFIG_SYS_CONFIG_NAME="gec210"
++
++#
++# ARM architecture
++#
++CONFIG_HAS_VBAR=y
++CONFIG_HAS_THUMB2=y
++CONFIG_ARM_ASM_UNIFIED=y
++CONFIG_CPU_V7=y
++CONFIG_SYS_ARM_ARCH=7
++CONFIG_SYS_CACHE_SHIFT_6=y
++CONFIG_SYS_CACHELINE_SIZE=64
++# CONFIG_ARM_SMCCC is not set
++# CONFIG_SEMIHOSTING is not set
++# CONFIG_SYS_THUMB_BUILD is not set
++# CONFIG_SPL_SYS_THUMB_BUILD is not set
++# CONFIG_SYS_L2CACHE_OFF is not set
++# CONFIG_ENABLE_ARM_SOC_BOOT0_HOOK is not set
++# CONFIG_ARM_CORTEX_CPU_IS_UP is not set
++CONFIG_USE_ARCH_MEMCPY=y
++CONFIG_SPL_USE_ARCH_MEMCPY=y
++CONFIG_USE_ARCH_MEMSET=y
++CONFIG_SPL_USE_ARCH_MEMSET=y
++# CONFIG_ARM64_SUPPORT_AARCH32 is not set
++# CONFIG_ARCH_AT91 is not set
++# CONFIG_TARGET_EDB93XX is not set
++# CONFIG_TARGET_ASPENITE is not set
++# CONFIG_TARGET_GPLUGD is not set
++# CONFIG_ARCH_DAVINCI is not set
++# CONFIG_KIRKWOOD is not set
++# CONFIG_ARCH_MVEBU is not set
++# CONFIG_TARGET_DEVKIT3250 is not set
++# CONFIG_TARGET_WORK_92105 is not set
++# CONFIG_TARGET_APF27 is not set
++# CONFIG_TARGET_APX4DEVKIT is not set
++# CONFIG_TARGET_XFI3 is not set
++# CONFIG_TARGET_M28EVK is not set
++# CONFIG_TARGET_MX23EVK is not set
++# CONFIG_TARGET_MX28EVK is not set
++# CONFIG_TARGET_MX23_OLINUXINO is not set
++# CONFIG_TARGET_BG0900 is not set
++# CONFIG_TARGET_SANSA_FUZE_PLUS is not set
++# CONFIG_TARGET_SC_SPS_1 is not set
++# CONFIG_ORION5X is not set
++# CONFIG_TARGET_SPEAR300 is not set
++# CONFIG_TARGET_SPEAR310 is not set
++# CONFIG_TARGET_SPEAR320 is not set
++# CONFIG_TARGET_SPEAR600 is not set
++# CONFIG_TARGET_STV0991 is not set
++# CONFIG_TARGET_X600 is not set
++# CONFIG_TARGET_IMX31_PHYCORE is not set
++# CONFIG_TARGET_IMX31_PHYCORE_EET is not set
++# CONFIG_TARGET_MX31ADS is not set
++# CONFIG_TARGET_MX31PDK is not set
++# CONFIG_TARGET_WOODBURN is not set
++# CONFIG_TARGET_WOODBURN_SD is not set
++# CONFIG_TARGET_FLEA3 is not set
++# CONFIG_TARGET_MX35PDK is not set
++# CONFIG_ARCH_BCM283X is not set
++# CONFIG_TARGET_VEXPRESS_CA15_TC2 is not set
++# CONFIG_TARGET_VEXPRESS_CA5X2 is not set
++# CONFIG_TARGET_VEXPRESS_CA9X4 is not set
++# CONFIG_TARGET_BCM23550_W1D is not set
++# CONFIG_TARGET_BCM28155_AP is not set
++# CONFIG_TARGET_BCMCYGNUS is not set
++# CONFIG_TARGET_BCMNSP is not set
++# CONFIG_TARGET_BCMNS2 is not set
++# CONFIG_ARCH_EXYNOS is not set
++CONFIG_ARCH_S5PC1XX=y
++# CONFIG_ARCH_HIGHBANK is not set
++# CONFIG_ARCH_INTEGRATOR is not set
++# CONFIG_ARCH_KEYSTONE is not set
++# CONFIG_ARCH_OMAP2PLUS is not set
++# CONFIG_ARCH_MESON is not set
++# CONFIG_ARCH_MX25 is not set
++# CONFIG_ARCH_MX7ULP is not set
++# CONFIG_ARCH_MX7 is not set
++# CONFIG_ARCH_MX6 is not set
++# CONFIG_ARCH_MX5 is not set
++# CONFIG_ARCH_QEMU is not set
++# CONFIG_ARCH_RMOBILE is not set
++# CONFIG_TARGET_S32V234EVB is not set
++# CONFIG_ARCH_SNAPDRAGON is not set
++# CONFIG_ARCH_SOCFPGA is not set
++# CONFIG_ARCH_SUNXI is not set
++# CONFIG_TARGET_TS4600 is not set
++# CONFIG_ARCH_VF610 is not set
++# CONFIG_ARCH_ZYNQ is not set
++# CONFIG_ARCH_ZYNQMP is not set
++# CONFIG_TEGRA is not set
++# CONFIG_TARGET_VEXPRESS64_AEMV8A is not set
++# CONFIG_TARGET_VEXPRESS64_BASE_FVP is not set
++# CONFIG_TARGET_VEXPRESS64_BASE_FVP_DRAM is not set
++# CONFIG_TARGET_VEXPRESS64_JUNO is not set
++# CONFIG_TARGET_LS2080A_EMU is not set
++# CONFIG_TARGET_LS2080A_SIMU is not set
++# CONFIG_TARGET_LS1088AQDS is not set
++# CONFIG_TARGET_LS2080AQDS is not set
++# CONFIG_TARGET_LS2080ARDB is not set
++# CONFIG_TARGET_LS2081ARDB is not set
++# CONFIG_TARGET_HIKEY is not set
++# CONFIG_TARGET_POPLAR is not set
++# CONFIG_TARGET_LS1012AQDS is not set
++# CONFIG_TARGET_LS1012ARDB is not set
++# CONFIG_TARGET_LS1012AFRDM is not set
++# CONFIG_TARGET_LS1088ARDB is not set
++# CONFIG_TARGET_LS1021AQDS is not set
++# CONFIG_TARGET_LS1021ATWR is not set
++# CONFIG_TARGET_LS1021AIOT is not set
++# CONFIG_TARGET_LS1043AQDS is not set
++# CONFIG_TARGET_LS1043ARDB is not set
++# CONFIG_TARGET_LS1046AQDS is not set
++# CONFIG_TARGET_LS1046ARDB is not set
++# CONFIG_TARGET_H2200 is not set
++# CONFIG_TARGET_ZIPITZ2 is not set
++# CONFIG_TARGET_COLIBRI_PXA270 is not set
++# CONFIG_ARCH_UNIPHIER is not set
++# CONFIG_STM32 is not set
++# CONFIG_ARCH_STI is not set
++# CONFIG_ARCH_ROCKCHIP is not set
++# CONFIG_TARGET_THUNDERX_88XX is not set
++# CONFIG_ARCH_ASPEED is not set
++CONFIG_SYS_MALLOC_F_LEN=0x400
++# CONFIG_TARGET_S5P_GONI is not set
++# CONFIG_TARGET_SMDKC100 is not set
++CONFIG_TARGET_GEC210=y
++CONFIG_IDENT_STRING=" for GEC210"
++# CONFIG_ARMV7_LPAE is not set
++# CONFIG_CMD_DEKBLOB is not set
++# CONFIG_CMD_HDMIDETECT is not set
++
++#
++# ARM debug
++#
++# CONFIG_DEBUG_LL is not set
++CONFIG_DEFAULT_DEVICE_TREE="s5pc1xx-smdkc100"
++CONFIG_SMBIOS_PRODUCT_NAME="smdkc100"
++# CONFIG_DEBUG_UART is not set
++# CONFIG_AHCI is not set
++
++#
++# General setup
++#
++CONFIG_LOCALVERSION=""
++CONFIG_LOCALVERSION_AUTO=y
++CONFIG_CC_OPTIMIZE_FOR_SIZE=y
++# CONFIG_DISTRO_DEFAULTS is not set
++CONFIG_SYS_MALLOC_F=y
++CONFIG_SPL_SYS_MALLOC_F_LEN=0x400
++CONFIG_TPL_SYS_MALLOC_F_LEN=0x400
++CONFIG_EXPERT=y
++CONFIG_SYS_MALLOC_CLEAR_ON_INIT=y
++# CONFIG_TOOLS_DEBUG is not set
++# CONFIG_PHYS_64BIT is not set
++
++#
++# Boot images
++#
++# CONFIG_ANDROID_BOOT_IMAGE is not set
++# CONFIG_FIT is not set
++# CONFIG_OF_BOARD_SETUP is not set
++# CONFIG_OF_SYSTEM_SETUP is not set
++# CONFIG_OF_STDOUT_VIA_ALIAS is not set
++CONFIG_SYS_EXTRA_OPTIONS=""
++CONFIG_ARCH_FIXUP_FDT_MEMORY=y
++
++#
++# API
++#
++# CONFIG_API is not set
++
++#
++# Boot timing
++#
++# CONFIG_BOOTSTAGE is not set
++CONFIG_BOOTSTAGE_RECORD_COUNT=30
++CONFIG_SPL_BOOTSTAGE_RECORD_COUNT=5
++CONFIG_BOOTSTAGE_STASH_ADDR=0
++CONFIG_BOOTSTAGE_STASH_SIZE=0x1000
++
++#
++# Boot media
++#
++CONFIG_NAND_BOOT=y
++# CONFIG_ONENAND_BOOT is not set
++# CONFIG_QSPI_BOOT is not set
++# CONFIG_SATA_BOOT is not set
++CONFIG_SD_BOOT=y
++# CONFIG_SPI_BOOT is not set
++CONFIG_BOOTDELAY=3
++CONFIG_USE_BOOTARGS=y
++CONFIG_BOOTARGS="root=/dev/mtdblock5 ubi.mtd=4 rootfstype=cramfs console=ttySAC0,115200n8 mem=128M  mtdparts=s3c-onenand:256k(bootloader),128k@0x40000(params),3m@0x60000(kernel),16m@0x360000(test),-(UBI)"
++# CONFIG_USE_BOOTCOMMAND is not set
++
++#
++# Console
++#
++# CONFIG_CONSOLE_RECORD is not set
++CONFIG_LOGLEVEL=4
++CONFIG_SPL_LOGLEVEL=4
++# CONFIG_SILENT_CONSOLE is not set
++# CONFIG_PRE_CONSOLE_BUFFER is not set
++# CONFIG_CONSOLE_MUX is not set
++# CONFIG_SYS_CONSOLE_IS_IN_ENV is not set
++# CONFIG_SYS_CONSOLE_OVERWRITE_ROUTINE is not set
++# CONFIG_SYS_CONSOLE_ENV_OVERWRITE is not set
++# CONFIG_SYS_CONSOLE_INFO_QUIET is not set
++# CONFIG_SYS_STDIO_DEREGISTER is not set
++
++#
++# Logging
++#
++# CONFIG_LOG is not set
++# CONFIG_SPL_LOG is not set
++CONFIG_DEFAULT_FDT_FILE=""
++# CONFIG_VERSION_VARIABLE is not set
++CONFIG_DISPLAY_CPUINFO=y
++CONFIG_DISPLAY_BOARDINFO=y
++
++#
++# Start-up hooks
++#
++# CONFIG_ARCH_EARLY_INIT_R is not set
++# CONFIG_ARCH_MISC_INIT is not set
++# CONFIG_BOARD_EARLY_INIT_F is not set
++
++#
++# Security support
++#
++CONFIG_HASH=y
++
++#
++# SPL / TPL
++#
++
++#
++# Command line interface
++#
++CONFIG_CMDLINE=y
++CONFIG_HUSH_PARSER=y
++CONFIG_SYS_PROMPT="GEC210 # "
++
++#
++# Autoboot options
++#
++CONFIG_AUTOBOOT=y
++# CONFIG_AUTOBOOT_KEYED is not set
++
++#
++# FASTBOOT
++#
++
++#
++# Commands
++#
++
++#
++# Info commands
++#
++CONFIG_CMD_BDI=y
++# CONFIG_CMD_CONFIG is not set
++CONFIG_CMD_CONSOLE=y
++# CONFIG_CMD_CPU is not set
++# CONFIG_CMD_LICENSE is not set
++
++#
++# Boot commands
++#
++CONFIG_CMD_BOOTD=y
++CONFIG_CMD_BOOTM=y
++# CONFIG_CMD_BOOTZ is not set
++CONFIG_CMD_BOOTEFI=y
++CONFIG_CMD_BOOTEFI_HELLO_COMPILE=y
++# CONFIG_CMD_BOOTEFI_HELLO is not set
++# CONFIG_CMD_BOOTEFI_SELFTEST is not set
++# CONFIG_CMD_BOOTMENU is not set
++CONFIG_CMD_ELF=y
++CONFIG_CMD_FDT=y
++CONFIG_CMD_GO=y
++CONFIG_CMD_RUN=y
++CONFIG_CMD_IMI=y
++# CONFIG_CMD_IMLS is not set
++CONFIG_CMD_XIMG=y
++# CONFIG_CMD_POWEROFF is not set
++# CONFIG_CMD_THOR_DOWNLOAD is not set
++# CONFIG_CMD_ZBOOT is not set
++
++#
++# Environment commands
++#
++# CONFIG_CMD_ASKENV is not set
++CONFIG_CMD_EXPORTENV=y
++CONFIG_CMD_IMPORTENV=y
++CONFIG_CMD_EDITENV=y
++# CONFIG_CMD_GREPENV is not set
++CONFIG_CMD_SAVEENV=y
++CONFIG_CMD_ENV_EXISTS=y
++# CONFIG_CMD_ENV_CALLBACK is not set
++# CONFIG_CMD_ENV_FLAGS is not set
++
++#
++# Memory commands
++#
++CONFIG_CMD_CRC32=y
++# CONFIG_CRC32_VERIFY is not set
++# CONFIG_CMD_EEPROM is not set
++# CONFIG_LOOPW is not set
++# CONFIG_CMD_MD5SUM is not set
++# CONFIG_CMD_MEMINFO is not set
++CONFIG_CMD_MEMORY=y
++# CONFIG_CMD_MEMTEST is not set
++# CONFIG_CMD_MX_CYCLIC is not set
++# CONFIG_CMD_SHA1SUM is not set
++# CONFIG_CMD_STRINGS is not set
++
++#
++# Compression commands
++#
++# CONFIG_CMD_LZMADEC is not set
++# CONFIG_CMD_UNZIP is not set
++# CONFIG_CMD_ZIP is not set
++
++#
++# Device access commands
++#
++# CONFIG_CMD_ARMFLASH is not set
++# CONFIG_CMD_CLK is not set
++# CONFIG_CMD_DEMO is not set
++# CONFIG_CMD_DFU is not set
++CONFIG_CMD_DM=y
++# CONFIG_CMD_FDC is not set
++# CONFIG_CMD_FLASH is not set
++CONFIG_CMD_FPGA=y
++# CONFIG_CMD_FPGA_LOADBP is not set
++# CONFIG_CMD_FPGA_LOADFS is not set
++# CONFIG_CMD_FPGA_LOADMK is not set
++# CONFIG_CMD_FPGA_LOADP is not set
++# CONFIG_CMD_FPGAD is not set
++# CONFIG_CMD_FUSE is not set
++# CONFIG_CMD_GPIO is not set
++# CONFIG_CMD_GPT is not set
++# CONFIG_RANDOM_UUID is not set
++# CONFIG_CMD_IDE is not set
++# CONFIG_CMD_IO is not set
++# CONFIG_CMD_IOTRACE is not set
++# CONFIG_CMD_I2C is not set
++CONFIG_CMD_LOADB=y
++CONFIG_CMD_LOADS=y
++# CONFIG_CMD_MMC is not set
++# CONFIG_CMD_NAND is not set
++# CONFIG_CMD_MMC_SPI is not set
++CONFIG_CMD_ONENAND=y
++# CONFIG_CMD_PART is not set
++# CONFIG_CMD_PCI is not set
++# CONFIG_CMD_PCMCIA is not set
++# CONFIG_CMD_READ is not set
++# CONFIG_CMD_SATA is not set
++# CONFIG_CMD_SAVES is not set
++# CONFIG_CMD_SDRAM is not set
++# CONFIG_CMD_SF is not set
++# CONFIG_CMD_SF_TEST is not set
++# CONFIG_CMD_SPI is not set
++# CONFIG_CMD_TSI148 is not set
++# CONFIG_CMD_UNIVERSE is not set
++# CONFIG_CMD_USB is not set
++# CONFIG_CMD_USB_SDP is not set
++# CONFIG_CMD_USB_MASS_STORAGE is not set
++
++#
++# Shell scripting commands
++#
++CONFIG_CMD_ECHO=y
++CONFIG_CMD_ITEST=y
++CONFIG_CMD_SOURCE=y
++# CONFIG_CMD_SETEXPR is not set
++
++#
++# Network commands
++#
++CONFIG_CMD_NET=y
++# CONFIG_CMD_TFTPPUT is not set
++# CONFIG_CMD_TFTPSRV is not set
++# CONFIG_CMD_RARP is not set
++# CONFIG_CMD_DHCP is not set
++# CONFIG_CMD_PXE is not set
++CONFIG_CMD_NFS=y
++# CONFIG_CMD_MII is not set
++# CONFIG_CMD_PING is not set
++# CONFIG_CMD_CDP is not set
++# CONFIG_CMD_SNTP is not set
++# CONFIG_CMD_DNS is not set
++# CONFIG_CMD_LINK_LOCAL is not set
++# CONFIG_CMD_ETHSW is not set
++
++#
++# Misc commands
++#
++# CONFIG_CMD_BSP is not set
++CONFIG_CMD_CACHE=y
++# CONFIG_CMD_DISPLAY is not set
++# CONFIG_CMD_LED is not set
++# CONFIG_CMD_DATE is not set
++# CONFIG_CMD_TIME is not set
++# CONFIG_CMD_GETTIME is not set
++CONFIG_CMD_MISC=y
++# CONFIG_CMD_TIMER is not set
++# CONFIG_CMD_QFW is not set
++# CONFIG_CMD_TERMINAL is not set
++# CONFIG_CMD_UUID is not set
++
++#
++# Power commands
++#
++
++#
++# Security commands
++#
++# CONFIG_CMD_AES is not set
++# CONFIG_CMD_BLOB is not set
++# CONFIG_CMD_HASH is not set
++
++#
++# Firmware commands
++#
++
++#
++# Filesystem commands
++#
++# CONFIG_CMD_BTRFS is not set
++# CONFIG_CMD_EXT2 is not set
++# CONFIG_CMD_EXT4 is not set
++CONFIG_CMD_FAT=y
++# CONFIG_CMD_FS_GENERIC is not set
++# CONFIG_CMD_FS_UUID is not set
++# CONFIG_CMD_JFFS2 is not set
++CONFIG_CMD_MTDPARTS=y
++CONFIG_MTDIDS_DEFAULT="onenand0=s3c-onenand"
++CONFIG_MTDPARTS_DEFAULT="mtdparts=s3c-onenand:256k(bootloader),128k@0x40000(params),3m@0x60000(kernel),16m@0x360000(test),-(UBI)"
++# CONFIG_CMD_MTDPARTS_SPREAD is not set
++# CONFIG_CMD_REISER is not set
++# CONFIG_CMD_SCSI is not set
++# CONFIG_CMD_ZFS is not set
++
++#
++# Debug commands
++#
++# CONFIG_CMD_BEDBUG is not set
++# CONFIG_CMD_DIAG is not set
++# CONFIG_CMD_KGDB is not set
++# CONFIG_CMD_LOG is not set
++# CONFIG_CMD_TRACE is not set
++# CONFIG_CMD_UBI is not set
++
++#
++# Partition Types
++#
++CONFIG_PARTITIONS=y
++# CONFIG_MAC_PARTITION is not set
++CONFIG_DOS_PARTITION=y
++# CONFIG_ISO_PARTITION is not set
++# CONFIG_AMIGA_PARTITION is not set
++# CONFIG_EFI_PARTITION is not set
++# CONFIG_PARTITION_UUIDS is not set
++CONFIG_SUPPORT_OF_CONTROL=y
++CONFIG_DTC=y
++
++#
++# Device Tree Control
++#
++CONFIG_OF_CONTROL=y
++# CONFIG_OF_BOARD_FIXUP is not set
++# CONFIG_OF_LIVE is not set
++CONFIG_OF_SEPARATE=y
++# CONFIG_OF_EMBED is not set
++# CONFIG_OF_BOARD is not set
++# CONFIG_MULTI_DTB_FIT is not set
++CONFIG_MKIMAGE_DTC_PATH="dtc"
++
++#
++# Environment
++#
++# CONFIG_ENV_IS_NOWHERE is not set
++# CONFIG_ENV_IS_IN_EEPROM is not set
++# CONFIG_ENV_IS_IN_FAT is not set
++# CONFIG_ENV_IS_IN_FLASH is not set
++# CONFIG_ENV_IS_IN_MMC is not set
++# CONFIG_ENV_IS_IN_NAND is not set
++# CONFIG_ENV_IS_IN_NVRAM is not set
++CONFIG_ENV_IS_IN_ONENAND=y
++# CONFIG_ENV_IS_IN_REMOTE is not set
++# CONFIG_ENV_IS_IN_SPI_FLASH is not set
++# CONFIG_ENV_IS_IN_UBI is not set
++CONFIG_NET=y
++# CONFIG_NET_RANDOM_ETHADDR is not set
++# CONFIG_NETCONSOLE is not set
++CONFIG_NET_TFTP_VARS=y
++CONFIG_BOOTP_PXE_CLIENTARCH=0x15
++CONFIG_BOOTP_VCI_STRING="U-Boot.armv7"
++
++#
++# Device Drivers
++#
++
++#
++# Generic Driver Options
++#
++CONFIG_DM=y
++CONFIG_DM_WARN=y
++# CONFIG_DM_DEBUG is not set
++CONFIG_DM_DEVICE_REMOVE=y
++CONFIG_DM_STDIO=y
++CONFIG_DM_SEQ_ALIAS=y
++# CONFIG_SPL_DM_SEQ_ALIAS is not set
++# CONFIG_REGMAP is not set
++# CONFIG_DEVRES is not set
++CONFIG_SIMPLE_BUS=y
++CONFIG_OF_TRANSLATE=y
++CONFIG_DM_DEV_READ_INLINE=y
++# CONFIG_ADC is not set
++# CONFIG_ADC_EXYNOS is not set
++# CONFIG_ADC_SANDBOX is not set
++# CONFIG_SARADC_ROCKCHIP is not set
++# CONFIG_SATA is not set
++# CONFIG_SCSI_AHCI is not set
++
++#
++# SATA/SCSI device support
++#
++# CONFIG_DWC_AHSATA is not set
++# CONFIG_FSL_SATA is not set
++# CONFIG_MVSATA_IDE is not set
++# CONFIG_SATA_MV is not set
++# CONFIG_SATA_SIL is not set
++# CONFIG_SATA_SIL3114 is not set
++# CONFIG_BLK is not set
++# CONFIG_BLOCK_CACHE is not set
++# CONFIG_IDE is not set
++
++#
++# Boot count support
++#
++# CONFIG_BOOTCOUNT is not set
++
++#
++# Clock
++#
++# CONFIG_CLK is not set
++# CONFIG_CPU is not set
++
++#
++# Hardware crypto devices
++#
++# CONFIG_FSL_CAAM is not set
++# CONFIG_SYS_FSL_SEC_BE is not set
++# CONFIG_SYS_FSL_SEC_LE is not set
++
++#
++# Demo for driver model
++#
++# CONFIG_DM_DEMO is not set
++
++#
++# DFU support
++#
++
++#
++# DMA Support
++#
++# CONFIG_DMA is not set
++# CONFIG_TI_EDMA3 is not set
++
++#
++# FPGA support
++#
++# CONFIG_FPGA_ALTERA is not set
++# CONFIG_FPGA_SOCFPGA is not set
++# CONFIG_FPGA_XILINX is not set
++
++#
++# GPIO Support
++#
++CONFIG_DM_GPIO=y
++# CONFIG_ALTERA_PIO is not set
++# CONFIG_DWAPB_GPIO is not set
++# CONFIG_AT91_GPIO is not set
++# CONFIG_ATMEL_PIO4 is not set
++# CONFIG_INTEL_BROADWELL_GPIO is not set
++# CONFIG_INTEL_ICH6_GPIO is not set
++# CONFIG_IMX_RGPIO2P is not set
++# CONFIG_HSDK_CREG_GPIO is not set
++# CONFIG_LPC32XX_GPIO is not set
++# CONFIG_MSM_GPIO is not set
++# CONFIG_CMD_PCA953X is not set
++# CONFIG_PCF8575_GPIO is not set
++# CONFIG_ROCKCHIP_GPIO is not set
++# CONFIG_CMD_TCA642X is not set
++# CONFIG_TEGRA_GPIO is not set
++# CONFIG_TEGRA186_GPIO is not set
++# CONFIG_VYBRID_GPIO is not set
++# CONFIG_DM_74X164 is not set
++# CONFIG_DM_PCA953X is not set
++# CONFIG_MPC85XX_GPIO is not set
++
++#
++# I2C support
++#
++CONFIG_DM_I2C=y
++# CONFIG_DM_I2C_COMPAT is not set
++# CONFIG_I2C_SET_DEFAULT_BUS_NUM is not set
++# CONFIG_DM_I2C_GPIO is not set
++# CONFIG_SYS_I2C_FSL is not set
++# CONFIG_SYS_I2C_DW is not set
++# CONFIG_SYS_I2C_INTEL is not set
++# CONFIG_SYS_I2C_IMX_LPI2C is not set
++# CONFIG_SYS_I2C_ROCKCHIP is not set
++# CONFIG_SYS_I2C_MVTWSI is not set
++# CONFIG_I2C_MUX is not set
++# CONFIG_DM_KEYBOARD is not set
++# CONFIG_CROS_EC_KEYB is not set
++
++#
++# LED Support
++#
++# CONFIG_LED is not set
++# CONFIG_LED_STATUS is not set
++
++#
++# Mailbox Controller Support
++#
++# CONFIG_DM_MAILBOX is not set
++
++#
++# Memory Controller drivers
++#
++
++#
++# Multifunction device drivers
++#
++# CONFIG_MISC is not set
++# CONFIG_CROS_EC is not set
++# CONFIG_DS4510 is not set
++# CONFIG_FSL_SEC_MON is not set
++# CONFIG_MXC_OCOTP is not set
++# CONFIG_NUVOTON_NCT6102D is not set
++# CONFIG_PWRSEQ is not set
++# CONFIG_PCA9551_LED is not set
++# CONFIG_WINBOND_W83627 is not set
++
++#
++# MMC Host controller Support
++#
++# CONFIG_MMC is not set
++# CONFIG_DM_MMC is not set
++
++#
++# MTD Support
++#
++# CONFIG_MTD is not set
++# CONFIG_MTD_NOR_FLASH is not set
++# CONFIG_NAND is not set
++
++#
++# SPI Flash Support
++#
++# CONFIG_SPI_FLASH is not set
++
++#
++# UBI support
++#
++# CONFIG_MTD_UBI is not set
++# CONFIG_BITBANGMII is not set
++# CONFIG_MV88E6352_SWITCH is not set
++# CONFIG_PHYLIB is not set
++# CONFIG_DM_ETH is not set
++CONFIG_NETDEVICES=y
++# CONFIG_PHY_GIGE is not set
++# CONFIG_BCM_SF2_ETH is not set
++# CONFIG_E1000 is not set
++# CONFIG_ETH_DESIGNWARE is not set
++# CONFIG_ETHOC is not set
++# CONFIG_FTMAC100 is not set
++# CONFIG_RGMII is not set
++# CONFIG_RTL8139 is not set
++# CONFIG_RTL8169 is not set
++CONFIG_SMC911X=y
++CONFIG_SMC911X_BASE=0x98800300
++# CONFIG_SMC911X_32_BIT is not set
++CONFIG_SMC911X_16_BIT=y
++# CONFIG_SUN7I_GMAC is not set
++# CONFIG_PCI is not set
++
++#
++# PHY Subsystem
++#
++# CONFIG_PHY is not set
++# CONFIG_SPL_PHY is not set
++# CONFIG_MVEBU_COMPHY_SUPPORT is not set
++
++#
++# Pin controllers
++#
++# CONFIG_PINCTRL is not set
++
++#
++# Power
++#
++
++#
++# Power Domain Support
++#
++# CONFIG_POWER_DOMAIN is not set
++# CONFIG_DM_PMIC is not set
++# CONFIG_PMIC_AS3722 is not set
++# CONFIG_POWER_MC34VR500 is not set
++# CONFIG_DM_REGULATOR is not set
++# CONFIG_DM_PWM is not set
++# CONFIG_PWM_SANDBOX is not set
++# CONFIG_RAM is not set
++
++#
++# Remote Processor drivers
++#
++
++#
++# Reset Controller Support
++#
++# CONFIG_DM_RESET is not set
++
++#
++# Real Time Clock
++#
++# CONFIG_DM_RTC is not set
++# CONFIG_RTC_S35392A is not set
++# CONFIG_SCSI is not set
++
++#
++# Serial drivers
++#
++CONFIG_BAUDRATE=115200
++CONFIG_REQUIRE_SERIAL_CONSOLE=y
++CONFIG_SERIAL_PRESENT=y
++CONFIG_SPL_SERIAL_PRESENT=y
++CONFIG_DM_SERIAL=y
++# CONFIG_SERIAL_RX_BUFFER is not set
++# CONFIG_SPL_DM_SERIAL is not set
++# CONFIG_TPL_DM_SERIAL is not set
++# CONFIG_DEBUG_UART_SKIP_INIT is not set
++# CONFIG_ALTERA_JTAG_UART is not set
++# CONFIG_ALTERA_UART is not set
++# CONFIG_ATMEL_USART is not set
++# CONFIG_FSL_LPUART is not set
++# CONFIG_MVEBU_A3700_UART is not set
++# CONFIG_NULLDEV_SERIAL is not set
++# CONFIG_SYS_NS16550 is not set
++# CONFIG_MSM_SERIAL is not set
++# CONFIG_PXA_SERIAL is not set
++
++#
++# Sound support
++#
++# CONFIG_SOUND is not set
++
++#
++# SPI Support
++#
++# CONFIG_DM_SPI is not set
++# CONFIG_SOFT_SPI is not set
++# CONFIG_FSL_ESPI is not set
++# CONFIG_FSL_QSPI is not set
++# CONFIG_ATCSPI200_SPI is not set
++# CONFIG_TI_QSPI is not set
++# CONFIG_OMAP3_SPI is not set
++
++#
++# SPMI support
++#
++# CONFIG_SPMI is not set
++
++#
++# System reset device drivers
++#
++# CONFIG_SYSRESET is not set
++# CONFIG_SYSRESET_SYSCON is not set
++# CONFIG_SYSRESET_WATCHDOG is not set
++# CONFIG_DM_THERMAL is not set
++
++#
++# Timer Support
++#
++# CONFIG_TIMER is not set
++
++#
++# TPM support
++#
++# CONFIG_USB is not set
++
++#
++# Graphics support
++#
++# CONFIG_DM_VIDEO is not set
++# CONFIG_SYS_WHITE_ON_BLACK is not set
++# CONFIG_NO_FB_CLEAR is not set
++
++#
++# TrueType Fonts
++#
++# CONFIG_VIDEO_VESA is not set
++# CONFIG_VIDEO_LCD_ANX9804 is not set
++# CONFIG_VIDEO_LCD_SSD2828 is not set
++# CONFIG_VIDEO_MVEBU is not set
++# CONFIG_I2C_EDID is not set
++# CONFIG_DISPLAY is not set
++# CONFIG_VIDEO_TEGRA20 is not set
++# CONFIG_VIDEO_BRIDGE is not set
++# CONFIG_VIDEO is not set
++# CONFIG_LCD is not set
++# CONFIG_VIDEO_SIMPLE is not set
++# CONFIG_VIDEO_DT_SIMPLEFB is not set
++
++#
++# Watchdog Timer Support
++#
++# CONFIG_BCM2835_WDT is not set
++# CONFIG_ULP_WATCHDOG is not set
++# CONFIG_WDT is not set
++# CONFIG_PHYS_TO_BUS is not set
++
++#
++# File systems
++#
++# CONFIG_FS_BTRFS is not set
++# CONFIG_FS_CBFS is not set
++CONFIG_FS_FAT=y
++# CONFIG_FAT_WRITE is not set
++CONFIG_FS_FAT_MAX_CLUSTSIZE=65536
++# CONFIG_FS_JFFS2 is not set
++# CONFIG_FS_CRAMFS is not set
++# CONFIG_YAFFS2 is not set
++
++#
++# Library routines
++#
++# CONFIG_BCH is not set
++# CONFIG_CC_OPTIMIZE_LIBS_FOR_SPEED is not set
++CONFIG_HAVE_PRIVATE_LIBGCC=y
++CONFIG_USE_PRIVATE_LIBGCC=y
++CONFIG_SYS_HZ=1000
++# CONFIG_USE_TINY_PRINTF is not set
++# CONFIG_PANIC_HANG is not set
++CONFIG_REGEX=y
++# CONFIG_LIB_RAND is not set
++# CONFIG_SPL_TINY_MEMSET is not set
++# CONFIG_TPL_TINY_MEMSET is not set
++# CONFIG_BITREVERSE is not set
++# CONFIG_CMD_DHRYSTONE is not set
++
++#
++# Security support
++#
++# CONFIG_AES is not set
++# CONFIG_RSA is not set
++# CONFIG_TPM is not set
++
++#
++# Hashing Support
++#
++# CONFIG_SHA1 is not set
++# CONFIG_SHA256 is not set
++# CONFIG_SHA_HW_ACCEL is not set
++
++#
++# Compression Support
++#
++# CONFIG_LZ4 is not set
++# CONFIG_LZMA is not set
++# CONFIG_LZO is not set
++# CONFIG_SPL_LZO is not set
++# CONFIG_SPL_GZIP is not set
++# CONFIG_ERRNO_STR is not set
++CONFIG_OF_LIBFDT=y
++# CONFIG_OF_LIBFDT_OVERLAY is not set
++# CONFIG_SPL_OF_LIBFDT is not set
++# CONFIG_FDT_FIXUP_PARTITIONS is not set
++
++#
++# System tables
++#
++CONFIG_GENERATE_SMBIOS_TABLE=y
++CONFIG_SMBIOS_MANUFACTURER="samsung"
++CONFIG_EFI_LOADER=y
++# CONFIG_UNIT_TEST is not set
+diff --git a/include/configs/gec210.h b/include/configs/gec210.h
+new file mode 100755
+index 0000000..c452d50
+--- /dev/null
++++ b/include/configs/gec210.h
+@@ -0,0 +1,173 @@
++﻿/*
++ * (C) Copyright 2009 Samsung Electronics
++ * Minkyu Kang <mk7.kang@samsung.com>
++ * HeungJun Kim <riverful.kim@samsung.com>
++ * Inki Dae <inki.dae@samsung.com>
++ *
++ * Configuation settings for the SAMSUNG SMDKC100 board.
++ *
++ * SPDX-License-Identifier:	GPL-2.0+
++ */
++
++#ifndef __CONFIG_H
++#define __CONFIG_H
++
++/*
++ * High Level Configuration Options
++ * (easy to change)
++ */
++#define CONFIG_SAMSUNG		1	/* in a SAMSUNG core */
++#define CONFIG_S5P		1	/* which is in a S5P Family */
++#define CONFIG_S5PC100		1	/* which is in a S5PC100 */
++//#define CONFIG_SMDKC100		1	/* working with SMDKC100 */
++#define CONFIG_GEC210		1	/* working with GEC210 */
++
++
++#include <asm/arch/cpu.h>		/* get chip and board defs */
++
++#define CONFIG_ARCH_CPU_INIT
++
++/* input clock of PLL: SMDKC100 has 12MHz input clock */
++#define CONFIG_SYS_CLK_FREQ		12000000
++
++/* DRAM Base */
++#define CONFIG_SYS_SDRAM_BASE		0x30000000
++
++/* Text Base */
++#define CONFIG_SYS_TEXT_BASE		0x34800000
++
++#define CONFIG_SETUP_MEMORY_TAGS
++#define CONFIG_CMDLINE_TAG
++#define CONFIG_INITRD_TAG
++#define CONFIG_CMDLINE_EDITING
++
++/*
++ * Size of malloc() pool
++ * 1MB = 0x100000, 0x100000 = 1024 * 1024
++ */
++#define CONFIG_SYS_MALLOC_LEN		(CONFIG_ENV_SIZE + (1 << 20))
++
++/*
++ * select serial console configuration
++ */
++#define CONFIG_SERIAL0			1	/* use SERIAL 0 on SMDKC100 */
++
++/* PWM */
++#define CONFIG_PWM			1
++
++/* allow to overwrite serial and ethaddr */
++#define CONFIG_ENV_OVERWRITE
++
++#define CONFIG_MTD_DEVICE
++#define CONFIG_MTD_PARTITIONS
++
++#define CONFIG_BOOTCOMMAND	"run ubifsboot"
++
++#define CONFIG_RAMDISK_BOOT	"root=/dev/ram0 rw rootfstype=ext2" \
++				" console=ttySAC0,115200n8" \
++				" mem=128M"
++
++#define CONFIG_COMMON_BOOT	"console=ttySAC0,115200n8" \
++				" mem=128M " \
++				" " CONFIG_MTDPARTS_DEFAULT
++
++#define CONFIG_UPDATEB	"updateb=onenand erase 0x0 0x40000;" \
++			" onenand write 0x32008000 0x0 0x40000\0"
++
++#define CONFIG_ENV_OVERWRITE
++#define CONFIG_EXTRA_ENV_SETTINGS					\
++	CONFIG_UPDATEB \
++	"updatek=" \
++		"onenand erase 0x60000 0x300000;" \
++		"onenand write 0x31008000 0x60000 0x300000\0" \
++	"updateu=" \
++		"onenand erase block 147-4095;" \
++		"onenand write 0x32000000 0x1260000 0x8C0000\0" \
++	"bootk=" \
++		"onenand read 0x30007FC0 0x60000 0x300000;" \
++		"bootm 0x30007FC0\0" \
++	"flashboot=" \
++		"set bootargs root=/dev/mtdblock${bootblock} " \
++		"rootfstype=${rootfstype} " \
++		"ubi.mtd=${ubiblock} ${opts} " CONFIG_COMMON_BOOT ";" \
++		"run bootk\0" \
++	"ubifsboot=" \
++		"set bootargs root=ubi0!rootfs rootfstype=ubifs " \
++		" ubi.mtd=${ubiblock} ${opts} " CONFIG_COMMON_BOOT "; " \
++		"run bootk\0" \
++	"boottrace=setenv opts initcall_debug; run bootcmd\0" \
++	"android=" \
++		"set bootargs root=ubi0!ramdisk ubi.mtd=${ubiblock} " \
++		"rootfstype=ubifs init=/init.sh " CONFIG_COMMON_BOOT "; " \
++		"run bootk\0" \
++	"nfsboot=" \
++		"set bootargs root=/dev/nfs ubi.mtd=${ubiblock} " \
++		"nfsroot=${nfsroot},nolock " \
++		"ip=${ipaddr}:${serverip}:${gatewayip}:" \
++		"${netmask}:nowplus:usb0:off " CONFIG_COMMON_BOOT "; " \
++		"run bootk\0" \
++	"ramboot=" \
++		"set bootargs " CONFIG_RAMDISK_BOOT \
++		" initrd=0x33000000,8M ramdisk=8192\0" \
++	"rootfstype=cramfs\0" \
++	"mtdparts=" CONFIG_MTDPARTS_DEFAULT "\0" \
++	"meminfo=mem=128M\0" \
++	"nfsroot=/nfsroot/arm\0" \
++	"bootblock=5\0" \
++	"ubiblock=4\0" \
++	"ubi=enabled"
++
++/*
++ * Miscellaneous configurable options
++ */
++#define CONFIG_SYS_LONGHELP		/* undef to save memory */
++#define CONFIG_SYS_PBSIZE	384	/* Print Buffer Size */
++/* memtest works on */
++#define CONFIG_SYS_MEMTEST_START	CONFIG_SYS_SDRAM_BASE
++#define CONFIG_SYS_MEMTEST_END		(CONFIG_SYS_SDRAM_BASE + 0x5e00000)
++#define CONFIG_SYS_LOAD_ADDR		CONFIG_SYS_SDRAM_BASE
++
++/* SMDKC100 has 1 banks of DRAM, we use only one in U-Boot */
++#define CONFIG_NR_DRAM_BANKS	1
++#define PHYS_SDRAM_1		CONFIG_SYS_SDRAM_BASE	/* SDRAM Bank #1 */
++#define PHYS_SDRAM_1_SIZE	(128 << 20)	/* 0x8000000, 128 MB Bank #1 */
++
++#define CONFIG_SYS_MONITOR_BASE	0x00000000
++
++/*-----------------------------------------------------------------------
++ * FLASH and environment organization
++ */
++
++#define CONFIG_SYS_MONITOR_LEN		(256 << 10)	/* 256 KiB */
++
++#if !defined(CONFIG_NAND_SPL) && (CONFIG_SYS_TEXT_BASE >= 0xc0000000)
++#define CONFIG_ENABLE_MMU
++#endif
++
++#ifdef CONFIG_ENABLE_MMU
++#define CONFIG_SYS_MAPPED_RAM_BASE	0xc0000000
++#else
++#define CONFIG_SYS_MAPPED_RAM_BASE	CONFIG_SYS_SDRAM_BASE
++#endif
++
++/*-----------------------------------------------------------------------
++ * Boot configuration
++ */
++#define CONFIG_ENV_SIZE			(128 << 10)	/* 128KiB, 0x20000 */
++#define CONFIG_ENV_ADDR			(256 << 10)	/* 256KiB, 0x40000 */
++#define CONFIG_ENV_OFFSET		(256 << 10)	/* 256KiB, 0x40000 */
++
++#define CONFIG_USE_ONENAND_BOARD_INIT
++#define CONFIG_SAMSUNG_ONENAND		1
++#define CONFIG_SYS_ONENAND_BASE		0xE7100000
++
++#define CONFIG_SYS_INIT_SP_ADDR	(CONFIG_SYS_LOAD_ADDR - 0x1000000)
++
++/*
++ * Ethernet Contoller driver
++ */
++#ifdef CONFIG_CMD_NET
++#define CONFIG_ENV_SROM_BANK   3       /* Select SROM Bank-3 for Ethernet*/
++#endif /* CONFIG_CMD_NET */
++
++#endif	/* __CONFIG_H */

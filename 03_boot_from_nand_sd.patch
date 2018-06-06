@@ -1,0 +1,703 @@
+diff --git a/arch/arm/cpu/armv7/start.S b/arch/arm/cpu/armv7/start.S
+index 95a0b52..ac56503 100755
+--- a/arch/arm/cpu/armv7/start.S
++++ b/arch/arm/cpu/armv7/start.S
+@@ -18,6 +18,7 @@
+ #include <asm/system.h>
+ #include <linux/linkage.h>
+ #include <asm/armv7.h>
++#include <asm/arch/s5pc110.h>
+ 
+ /*************************************************************************
+  *
+@@ -28,6 +29,11 @@
+  * Relocate armboot to ram. Setup stack.
+  *
+  *************************************************************************/
++_TEXT_PHY_BASE:
++	.word	CONFIG_SYS_TEXT_BASE
++
++copy_sd_mmc_to_mem:
++	.word	0xD0037F98
+ 
+ 	.globl	reset
+ 	.globl	save_boot_params_ret
+@@ -86,7 +92,98 @@ switch_to_hypervisor_ret:
+ #endif
+ #endif
+ 
+-	bl	_main
++/*
++ * load BL2 into DDR
++ */
++	/* get ready to call C functions */
++	ldr	sp, _TEXT_PHY_BASE	/* setup temp stack pointer */
++	sub	sp, sp, #12
++	mov	fp, #0			/* no previous frame, so fp=0 */
++
++	/* when we already run in ram, we do not need to relocate U-Boot.
++	 * and actually, memory controller must be configured before U-Boot
++	 * is running in ram.
++	 */
++	ldr	r0, =0xff000fff
++	bic	r1, pc, r0		/* r0 <- current base addr of code */
++	ldr	r2, _TEXT_PHY_BASE	/* r1 <- original base addr in ram */
++	bic	r2, r2, r0		/* r0 <- current base addr of code */
++	cmp     r1, r2                  /* compare r0, r1                  */
++	beq     after_copy		/* r0 == r1 then skip flash copy   */
++
++	/*
++         * Read booting information.
++         */
++        ldr	r0, =PRO_ID_BASE
++        ldr	r1, [r0,#OMR_OFFSET]
++        bic	r2, r1, #0xffffffc1
++
++	/* NAND BOOT */
++	cmp	r2, #0x0		@ eSSD
++	moveq	r3, #BOOT_NAND
++
++	cmp	r2, #0x2		@ 2KB 5-cycle	8-bit ECC
++	moveq	r3, #BOOT_NAND
++
++	cmp	r2, #0x4		@ 4KB 5-cycle	8-bit ECC
++	moveq	r3, #BOOT_NAND
++
++	cmp	r2, #0x6		@ 4KB 5-cycle	16-bit ECC
++	moveq	r3, #BOOT_NAND
++
++	cmp	r2, #0x8		@ OneNAND Mux
++	moveq	r3, #BOOT_ONENAND
++
++	/* SD/MMC BOOT */
++	cmp     r2, #0xc
++	moveq   r3, #BOOT_MMCSD
++
++	/* NOR BOOT */
++	cmp     r2, #0x14
++	moveq   r3, #BOOT_NOR
++
++	/* Uart BOOTONG failed */
++	cmp     r2, #(0x1<<4)
++	moveq   r3, #BOOT_SEC_DEV
++
++	ldr	r0, =INF_REG_BASE
++	str	r3, [r0, #INF_REG3_OFFSET]
++
++	/*
++	 * copy u-boot from specific device.
++	 */
++	ldr	r0, =INF_REG_BASE
++	ldr	r1, [r0, #INF_REG3_OFFSET]
++	cmp	r1, #BOOT_NAND		/* 0x0 => boot device is nand */
++	beq	nand_boot
++	cmp	r1, #BOOT_ONENAND	/* 0x1 => boot device is onenand */
++	beq	onenand_boot
++	cmp     r1, #BOOT_MMCSD
++	beq     mmcsd_boot
++	cmp     r1, #BOOT_NOR
++	beq     nor_boot
++	cmp     r1, #BOOT_SEC_DEV
++	beq     mmcsd_boot
++
++nand_boot:
++	mov	r0, #0x1000
++	bl	copy_from_nand
++	b	after_copy
++
++onenand_boot:
++	b	onenand_boot
++
++mmcsd_boot:
++	bl      copy_from_mmcsd
++	b       after_copy
++
++nor_boot:
++	b       nor_boot
++
++
++after_copy:
++	ldr	pc, =_main		@ jump into ddr
++
+ 
+ /*------------------------------------------------------------------------------*/
+ 
+@@ -325,3 +422,81 @@ ENTRY(cpu_init_crit)
+ 	b	lowlevel_init		@ go setup pll,mux,memory
+ ENDPROC(cpu_init_crit)
+ #endif
++
++
++/*************************************************************************
++ *
++ * copy U-Boot to SDRAM and jump to ram (from NAND or OneNAND)
++ * r0: size to be compared
++ * Load 1'st 2blocks to RAM because U-boot's size is larger than 1block(128k) size
++ *
++ *************************************************************************/
++ENTRY(copy_from_nand)
++	push	{lr}		/* save return address */
++
++	mov	r9, r0
++
++	mov	r9, #0x100		/* Compare about 8KB */
++	bl	copy_uboot_to_ram
++	tst 	r0, #0x0
++	bne	copy_failed
++
++	ldr	r0, =0xd0020000
++
++	ldr	r1, _TEXT_PHY_BASE
++
++#if !defined(CONFIG_SECURE_BOOT)
++1:	ldr	r3, [r0], #4
++	ldr	r4, [r1], #4
++	teq	r3, r4
++	bne	compare_failed	/* not matched */
++	subs	r9, r9, #4
++	bne	1b
++#endif
++	pop	{pc}		/* all is OK */
++
++copy_failed:
++	nop			/* copy from nand failed */
++	b	copy_failed
++
++compare_failed:
++	nop			/* compare failed */
++	b	compare_failed
++ENDPROC(copy_from_nand)
++
++
++/*************************************************************************
++ *
++ * copy U-Boot to SDRAM and jump to ram (from SD/MMC)
++ * size align with a block (512Byte)
++ *
++ *************************************************************************/
++ENTRY(copy_from_mmcsd)
++	push	{lr}		/* save return address */
++
++	/* @param_0 channel */
++	ldr	r0, =0
++
++	/* @param_1 u32 StartBlkAddress */
++	ldr	r1, =49		@ BL1 at block1,BL2 at block49
++
++	/* @param_2 u16 blockSize */
++	ldr	r2, =512<<10	@ 512kB, BL2 should include dtb file
++	lsr	r2, #9		@ r2 >>= 9, as r2/=512
++	add	r2, #1		@ r2 += 1
++
++	/* @param_3 u32* memoryPtr */
++	ldr	r3, _TEXT_PHY_BASE
++
++	/* @param_4 bool with_init */
++	ldr	r4, =0		@ no init
++	push	{r4}		@ fourth arg at stack
++
++	ldr	r4, copy_sd_mmc_to_mem
++	mov	lr, pc
++	ldr	pc, [r4]
++
++	pop	{r4, pc}
++
++ENDPROC(copy_from_mmcsd)
++
+diff --git a/arch/arm/cpu/u-boot.lds b/arch/arm/cpu/u-boot.lds
+index a6bfd3b..6c3feac 100755
+--- a/arch/arm/cpu/u-boot.lds
++++ b/arch/arm/cpu/u-boot.lds
+@@ -46,6 +46,7 @@ SECTIONS
+ 		CPUDIR/start.o (.text*)
+ 		board/samsung/gec210/lowlevel_init.o (.text*)
+ 		board/samsung/gec210/mem_init.o (.text*)
++		board/samsung/gec210/nand_cp.o (.text*)
+ 		*(.text*)
+ 	}
+ 
+diff --git a/arch/arm/mach-s5pc1xx/include/mach/s5pc110.h b/arch/arm/mach-s5pc1xx/include/mach/s5pc110.h
+index 5be75ff..34d9892 100755
+--- a/arch/arm/mach-s5pc1xx/include/mach/s5pc110.h
++++ b/arch/arm/mach-s5pc1xx/include/mach/s5pc110.h
+@@ -30,6 +30,8 @@
+ 
+ 
+ #define __REG(x)	(*(volatile unsigned long*)(x))
++#define __REGb(x)	(*(volatile unsigned char*)(x))
++
+ 
+ #ifndef CONFIG_S5PC110
+ #define CONFIG_S5PC110			1
+diff --git a/board/samsung/gec210/Makefile b/board/samsung/gec210/Makefile
+index fe65af4..ddeb488 100755
+--- a/board/samsung/gec210/Makefile
++++ b/board/samsung/gec210/Makefile
+@@ -12,3 +12,4 @@ obj-y	:= gec210.o
+ obj-$(CONFIG_SAMSUNG_ONENAND)	+= onenand.o
+ extra-y	+= lowlevel_init.o
+ extra-y	+= mem_init.o
++extra-y	+= nand_cp.o
+diff --git a/board/samsung/gec210/gec210.c b/board/samsung/gec210/gec210.c
+index 5d23844..8011259 100755
+--- a/board/samsung/gec210/gec210.c
++++ b/board/samsung/gec210/gec210.c
+@@ -1,4 +1,4 @@
+-/*
++﻿/*
+  *  Copyright (C) 2008-2009 Samsung Electronics
+  *  Minkyu Kang <mk7.kang@samsung.com>
+  *  Kyungmin Park <kyungmin.park@samsung.com>
+@@ -39,7 +39,7 @@ int board_init(void)
+ {
+ 	smc9115_pre_init();
+ 
+-	gd->bd->bi_arch_number = MACH_TYPE_SMDKC100;
++	gd->bd->bi_arch_number = MACH_TYPE_SMDKC110;
+ 	gd->bd->bi_boot_params = PHYS_SDRAM_1 + 0x100;
+ 
+ 	return 0;
+@@ -48,6 +48,7 @@ int board_init(void)
+ int dram_init(void)
+ {
+ 	gd->ram_size = get_ram_size((long *)PHYS_SDRAM_1, PHYS_SDRAM_1_SIZE);
++	gd->ram_size += get_ram_size((long *)PHYS_SDRAM_2, PHYS_SDRAM_2_SIZE);
+ 
+ 	return 0;
+ }
+@@ -57,13 +58,16 @@ int dram_init_banksize(void)
+ 	gd->bd->bi_dram[0].start = PHYS_SDRAM_1;
+ 	gd->bd->bi_dram[0].size = PHYS_SDRAM_1_SIZE;
+ 
++	gd->bd->bi_dram[1].start = PHYS_SDRAM_2;
++	gd->bd->bi_dram[1].size = PHYS_SDRAM_2_SIZE;
++
+ 	return 0;
+ }
+ 
+ #ifdef CONFIG_DISPLAY_BOARDINFO
+ int checkboard(void)
+ {
+-	printf("Board:\tSMDKC100\n");
++	printf("Board:\tGEC210\n");
+ 	return 0;
+ }
+ #endif
+diff --git a/board/samsung/gec210/lowlevel_init.S b/board/samsung/gec210/lowlevel_init.S
+index 678a429..9fa1cf9 100755
+--- a/board/samsung/gec210/lowlevel_init.S
++++ b/board/samsung/gec210/lowlevel_init.S
+@@ -31,12 +31,24 @@ lowlevel_init:
+ 	orr	r0, r0, #0x0
+ 	str	r5, [r0]
+ 
++	/* when we already run in ram, we do not need to relocate U-Boot.
++	 * and actually, memory controller must be configured before U-Boot
++	 * is running in ram.
++	 */
++	ldr	r0, =0xff000fff
++	bic	r1, pc, r0		/* r0 <- current base addr of code */
++	ldr	r2, =CONFIG_SYS_TEXT_BASE /* r1 <- original base addr in ram */
++	bic	r2, r2, r0		/* r0 <- current base addr of code */
++	cmp     r1, r2                  /* compare r0, r1                  */
++	beq     1f			/* r0 == r1 then skip sdram init   */
++
+ 	/* init system clock */
+ 	bl system_clock_init
+ 
+ 	/* Memory initialize */
+ 	bl mem_ctrl_asm_init
+ 
++1:
+ 	/* for UART */
+ 	bl uart_asm_init
+ 
+@@ -45,12 +57,12 @@ lowlevel_init:
+ 
+ 	/* simple init for NAND */
+ 	bl nand_asm_init
+-	
++
+ 	/* Print 'K' */
+ 	ldr	r0, =ELFIN_UART_CONSOLE_BASE
+ 	ldr	r1, =0x4b4b4b4b
+ 	str	r1, [r0, #UTXH_OFFSET]
+-1:
++
+ 	mov	lr, r9
+ 	mov	pc, lr
+ 
+@@ -141,35 +153,44 @@ retryloop:
+  * void uart_asm_init(void)
+  */
+ uart_asm_init:
++	/* uart0 gpio setup */
++	ldr 	r0, =GPA0CON
++	ldr 	r1, [r0]
++	bic 	r1, #0xff
++	orr 	r1, #0x22
++	str 	r1, [r0]
+ 
+-	/* set GPIO(GPA) to enable UART */
+-	@ GPIO setting for UART
+-	ldr	r0, =ELFIN_GPIO_BASE
+-	ldr	r1, =0x22222222
+-	str   	r1, [r0, #GPA0CON_OFFSET]
++	ldr 	r0, =ELFIN_UART_CONSOLE_BASE
+ 
+-	ldr     r1, =0x2222
+-	str     r1, [r0, #GPA1CON_OFFSET]
++	ldr 	r1, =0x00000003		@ No parityNo parity, No parity, 8-bit
++	str 	r1, [r0, #ULCON_OFFSET]
+ 
+-	ldr	r0, =ELFIN_UART_CONSOLE_BASE		@0xEC000000
+-	mov	r1, #0x0
+-	str	r1, [r0, #UFCON_OFFSET]
+-	str	r1, [r0, #UMCON_OFFSET]
++	ldr 	r1, =0x00000305		@  PCLK, Level, Interrupt request or polling mode
++	str 	r1, [r0, #UCON_OFFSET]
+ 
+-	mov	r1, #0x3
+-	str	r1, [r0, #ULCON_OFFSET]
++	ldr 	r1, =0x00000001		@ [trigger level] Tx FIFO-0 byte, Rx FIFO-32 byte,fifo en
++	str 	r1, [r0, #UFCON_OFFSET]
+ 
+-	ldr	r1, =0x3c5
+-	str	r1, [r0, #UCON_OFFSET]
++	ldr 	r1, =0			@ disable Auto Flow Control
++	str 	r1, [r0, #UMCON_OFFSET]
+ 
+-	ldr	r1, =UART_UBRDIV_VAL
+-	str	r1, [r0, #UBRDIV_OFFSET]
++	/* 
++	 * baudrate=115200
++	 * DIV_VAL = (660000000 / (115200 x 16)) -1 = 34.8
++	 * UBRDIVn = 34 ( integer part of DIV_VAL )
++	 * (num of 1's in UDIVSLOTn)/16 = 0.8, (num of 1's in UDIVSLOTn) = 13, UDIVSLOT=0xDFDD
++	 */
++	ldr 	r1, =34
++	str 	r1, [r0, #UBRDIV_OFFSET]
++	ldr 	r1, =0xDFDD
++	str 	r1, [r0, #UDIVSLOT_OFFSET]
+ 
+-	ldr	r1, =UART_UDIVSLOT_VAL
+-	str	r1, [r0, #UDIVSLOT_OFFSET]
++	ldr 	r1, =0x0f
++	str 	r1, [r0, #UINTM_OFFSET]	@ disable all uart interrupt
+ 
+-	ldr	r1, =0x4f4f4f4f
+-	str	r1, [r0, #UTXH_OFFSET]		@'O'
++	/* print "O" */
++	ldr 	r1, =0x4f
++	str 	r1, [r0, #UTXH_OFFSET]
+ 
+ 	mov	pc, lr
+ 
+diff --git a/board/samsung/gec210/nand_cp.c b/board/samsung/gec210/nand_cp.c
+new file mode 100755
+index 0000000..ca764bc
+--- /dev/null
++++ b/board/samsung/gec210/nand_cp.c
+@@ -0,0 +1,183 @@
++﻿/*
++ * $Id: nand_cp.c,v 1.1 2008/11/20 01:08:36 boyko Exp $
++ *
++ * (C) Copyright 2006 Samsung Electronics
++ *
++ * See file CREDITS for list of people who contributed to this
++ * project.
++ *
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License as
++ * published by the Free Software Foundation; either version 2 of
++ * the License, or (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, write to the Free Software
++ * Foundation, Inc., 59 Temple Place, Suite 330, Boston,
++ * MA 02111-1307 USA
++ */
++
++/*
++ * You must make sure that all functions in this file are designed
++ * to load only U-Boot image.
++ *
++ * So, DO NOT USE in common read.
++ *
++ * By scsuh.
++ */
++
++/*
++ * Large block only: Small block is not supported.
++ * No ECC operation: Bit error is not corrected.
++ */
++
++#include <common.h>
++
++#if 1 //def CONFIG_S5PC11X
++//#include <asm/io.h>
++#include <linux/mtd/rawnand.h>
++//#include <regs.h>
++#include <asm/arch/s5pc110.h>
++
++#define NAND_DISABLE_CE()	(NFCONT_REG |= (1 << 1))
++#define NAND_ENABLE_CE()	(NFCONT_REG &= ~(1 << 1))
++#define NF_TRANSRnB()		do { while(!(NFSTAT_REG & (1 << 0))); } while(0)
++
++#define NAND_CONTROL_ENABLE()	(NFCONT_REG |= (1 << 0))
++
++
++static void nand_readpage (ulong col, ulong row, uchar* buf, int len)
++{
++	int i;
++
++	NAND_ENABLE_CE();
++
++	NFCMD_REG = NAND_CMD_READ0;
++
++	/* Write Column Address */
++	NFADDR_REG = (col) & 0xff;
++	NFADDR_REG = (col >> 8) & 0xff;
++
++	/* Write Row Address */
++	NFADDR_REG = (row) & 0xff;
++	NFADDR_REG = (row >> 8) & 0xff;
++	NFADDR_REG = (row >> 16) & 0xff;
++
++	NFCMD_REG = NAND_CMD_READSTART;
++
++	NF_TRANSRnB();
++
++	for (i = 0; i < len; i++) {
++		buf[i] = NFDATA8_REG;
++	}
++
++	NAND_DISABLE_CE();
++}
++
++static int nand_isbad (ulong addr)
++{
++	int page_size = 2048;
++	uchar oob[2];
++
++	if (addr == 0)
++		return 0;
++
++	nand_readpage(page_size, addr, oob, 2);
++
++	if ((oob[0] == 0xFF) && (oob[1] == 0xFF))
++		return 0;
++	else
++		return 1;
++}
++
++/*
++ * address format
++ *              17 16         9 8            0
++ * --------------------------------------------
++ * | block(12bit) | page(5bit) | offset(9bit) |
++ * --------------------------------------------
++ */
++
++static int nandll_read_page (uchar *buf, ulong addr)
++{
++	int page_size = 2048;
++
++	nand_readpage(0, addr, buf, page_size);
++
++        return 0;
++}
++
++/*
++ * Read data from NAND.
++ */
++static int nandll_read_blocks (ulong dst_addr, ulong size)
++{
++        uchar *buf = (uchar *)dst_addr;
++        int i;
++
++#if defined(CONFIG_SECURE_BOOT)
++	int skipped_page = 6;
++#else
++	int skipped_page = 0;
++#endif
++
++	uint page_shift = 11;
++
++        /* Read pages */
++        for (i = 0; i < (size>>page_shift); i++, buf+=(1<<page_shift)) {
++		if ((i & (64 - 1)) == 0) {
++			while (nand_isbad(i + skipped_page)) {
++				skipped_page += 64;
++			}
++		}
++                nandll_read_page(buf, i + skipped_page);
++        }
++        return 0;
++}
++
++int copy_uboot_to_ram (void)
++{
++	int large_block = 0;
++	int i;
++	vu_char id;
++
++	int rv;
++
++	NAND_CONTROL_ENABLE();
++        NAND_ENABLE_CE();
++        NFCMD_REG = NAND_CMD_READID;
++        NFADDR_REG = 0x00;
++
++	/* wait for a while */
++        for (i=0; i<200; i++);
++	id = NFDATA8_REG;
++	id = NFDATA8_REG;
++
++	if (id > 0x80)
++		large_block = 1;
++	else
++		return -1;	// Do not support small page (512B) any more
++
++	/* read NAND blocks */
++	rv = nandll_read_blocks(CONFIG_SYS_TEXT_BASE, COPY_BL2_SIZE);
++
++#if defined(CONFIG_SECURE_BOOT)
++	rv = Check_Signature((SecureBoot_CTX *)SECURE_BOOT_CONTEXT_ADDR,
++			(unsigned char *)CFG_PHY_UBOOT_BASE,
++			(1024*512 - 128),
++			(unsigned char *)(CFG_PHY_UBOOT_BASE + (1024*512-128)),
++			128);
++	if (rv != SB_OK)
++		while(1);
++#endif
++
++	return rv;
++}
++ 
++#endif
++
+diff --git a/configs/gec210_defconfig b/configs/gec210_defconfig
+index 7e70d1d..3b6104a 100755
+--- a/configs/gec210_defconfig
++++ b/configs/gec210_defconfig
+@@ -157,7 +157,7 @@ CONFIG_IDENT_STRING=" for GEC210"
+ # CONFIG_DEBUG_LL is not set
+ CONFIG_DEFAULT_DEVICE_TREE="s5pc1xx-gec210"
+ CONFIG_SMBIOS_PRODUCT_NAME="smdkc100"
+-CONFIG_DEBUG_UART=y
++# CONFIG_DEBUG_UART is not set
+ # CONFIG_AHCI is not set
+ 
+ #
+@@ -371,7 +371,7 @@ CONFIG_CMD_LOADS=y
+ # CONFIG_CMD_MMC is not set
+ # CONFIG_CMD_NAND is not set
+ # CONFIG_CMD_MMC_SPI is not set
+-CONFIG_CMD_ONENAND=y
++# CONFIG_CMD_ONENAND is not set
+ # CONFIG_CMD_PART is not set
+ # CONFIG_CMD_PCI is not set
+ # CONFIG_CMD_PCMCIA is not set
+@@ -501,14 +501,14 @@ CONFIG_MKIMAGE_DTC_PATH="dtc"
+ #
+ # Environment
+ #
+-# CONFIG_ENV_IS_NOWHERE is not set
++CONFIG_ENV_IS_NOWHERE=y
+ # CONFIG_ENV_IS_IN_EEPROM is not set
+ # CONFIG_ENV_IS_IN_FAT is not set
+ # CONFIG_ENV_IS_IN_FLASH is not set
+ # CONFIG_ENV_IS_IN_MMC is not set
+ # CONFIG_ENV_IS_IN_NAND is not set
+ # CONFIG_ENV_IS_IN_NVRAM is not set
+-CONFIG_ENV_IS_IN_ONENAND=y
++# CONFIG_ENV_IS_IN_ONENAND is not set
+ # CONFIG_ENV_IS_IN_REMOTE is not set
+ # CONFIG_ENV_IS_IN_SPI_FLASH is not set
+ # CONFIG_ENV_IS_IN_UBI is not set
+@@ -766,23 +766,6 @@ CONFIG_DM_SERIAL=y
+ # CONFIG_SERIAL_RX_BUFFER is not set
+ # CONFIG_SPL_DM_SERIAL is not set
+ # CONFIG_TPL_DM_SERIAL is not set
+-# CONFIG_DEBUG_UART_ALTERA_JTAGUART is not set
+-# CONFIG_DEBUG_UART_ALTERA_UART is not set
+-# CONFIG_DEBUG_UART_ATMEL is not set
+-# CONFIG_DEBUG_UART_NS16550 is not set
+-CONFIG_DEBUG_UART_S5P=y
+-# CONFIG_DEBUG_UART_UARTLITE is not set
+-# CONFIG_DEBUG_UART_ARM_DCC is not set
+-# CONFIG_DEBUG_MVEBU_A3700_UART is not set
+-# CONFIG_DEBUG_UART_ZYNQ is not set
+-# CONFIG_DEBUG_UART_PL010 is not set
+-# CONFIG_DEBUG_UART_PL011 is not set
+-# CONFIG_DEBUG_UART_OMAP is not set
+-CONFIG_DEBUG_UART_BASE=0XE2900000
+-CONFIG_DEBUG_UART_CLOCK=115200
+-CONFIG_DEBUG_UART_SHIFT=0
+-# CONFIG_DEBUG_UART_BOARD_INIT is not set
+-# CONFIG_DEBUG_UART_ANNOUNCE is not set
+ # CONFIG_DEBUG_UART_SKIP_INIT is not set
+ # CONFIG_ALTERA_JTAG_UART is not set
+ # CONFIG_ALTERA_UART is not set
+diff --git a/include/configs/gec210.h b/include/configs/gec210.h
+index 61c38ef..adbb872 100755
+--- a/include/configs/gec210.h
++++ b/include/configs/gec210.h
+@@ -52,8 +52,6 @@
+  * select serial console configuration
+  */
+ #define CONFIG_SERIAL0			1	/* use SERIAL 0 on SMDKC100 */
+-#define UART_UBRDIV_VAL			34
+-#define UART_UDIVSLOT_VAL		0xDDDD
+ 
+ /* PWM */
+ #define CONFIG_PWM			1
+@@ -197,7 +195,7 @@
+ #define SDRAM_BANK_SIZE         0x10000000	/* 256MB */
+ #define PHYS_SDRAM_1            CONFIG_SYS_SDRAM_BASE /* SDRAM Bank #1 */
+ #define PHYS_SDRAM_1_SIZE       SDRAM_BANK_SIZE
+-#define PHYS_SDRAM_2            (MEMORY_BASE_ADDRESS1) /* SDRAM Bank #2(2016-10-12 20:19:53鏈辩浉涓滀慨鏀? */
++#define PHYS_SDRAM_2            (MEMORY_BASE_ADDRESS1) /* SDRAM Bank #2 */
+ #define PHYS_SDRAM_2_SIZE       SDRAM_BANK_SIZE
+ 
+ 
+@@ -209,7 +207,7 @@
+ /* memtest works on */
+ #define CONFIG_SYS_MEMTEST_START	CONFIG_SYS_SDRAM_BASE
+ #define CONFIG_SYS_MEMTEST_END		(CONFIG_SYS_SDRAM_BASE + 0x5e00000)
+-#define CONFIG_SYS_LOAD_ADDR		CONFIG_SYS_SDRAM_BASE
++#define CONFIG_SYS_LOAD_ADDR		CONFIG_SYS_TEXT_BASE
+ 
+ #define CONFIG_SYS_MONITOR_BASE	0x00000000
+ 
+@@ -232,13 +230,24 @@
+ /*-----------------------------------------------------------------------
+  * Boot configuration
+  */
++#define BOOT_ONENAND		0x1
++#define BOOT_NAND		0x2
++#define BOOT_MMCSD		0x3
++#define BOOT_NOR		0x4
++#define BOOT_SEC_DEV		0x5
++
+ #define CONFIG_ENV_SIZE			(128 << 10)	/* 128KiB, 0x20000 */
+ #define CONFIG_ENV_ADDR			(256 << 10)	/* 256KiB, 0x40000 */
+ #define CONFIG_ENV_OFFSET		(256 << 10)	/* 256KiB, 0x40000 */
+ 
++/* nand copy size from nand to DRAM.*/
++#define	COPY_BL2_SIZE		0x80000
++
++#if 0
+ #define CONFIG_USE_ONENAND_BOARD_INIT
+ #define CONFIG_SAMSUNG_ONENAND		1
+ #define CONFIG_SYS_ONENAND_BASE		0xE7100000
++#endif
+ 
+ #define CONFIG_SYS_INIT_SP_ADDR	(CONFIG_SYS_LOAD_ADDR - 0x1000000)
+ 
