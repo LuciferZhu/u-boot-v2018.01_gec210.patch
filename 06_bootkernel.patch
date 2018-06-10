@@ -1,0 +1,269 @@
+diff --git a/Makefile b/Makefile
+index 7de2e54..5d919ea 100755
+--- a/Makefile
++++ b/Makefile
+@@ -356,7 +356,7 @@ CHECK		= sparse
+ CHECKFLAGS     := -D__linux__ -Dlinux -D__STDC__ -Dunix -D__unix__ \
+ 		  -Wbitwise -Wno-return-void -D__CHECK_ENDIAN__ $(CF)
+ 
+-KBUILD_CPPFLAGS := -D__KERNEL__ -D__UBOOT__ -DDEBUG
++KBUILD_CPPFLAGS := -D__KERNEL__ -D__UBOOT__ #-DDEBUG
+ 
+ KBUILD_CFLAGS   := -Wall -Wstrict-prototypes \
+ 		   -Wno-format-security \
+diff --git a/arch/arm/include/asm/config.h b/arch/arm/include/asm/config.h
+index 9f17829..c5d7658 100755
+--- a/arch/arm/include/asm/config.h
++++ b/arch/arm/include/asm/config.h
+@@ -1,4 +1,4 @@
+-/*
++﻿/*
+  * Copyright 2009 Freescale Semiconductor, Inc.
+  *
+  * SPDX-License-Identifier:	GPL-2.0+
+@@ -8,7 +8,7 @@
+ #define _ASM_CONFIG_H_
+ 
+ #define CONFIG_LMB
+-#define CONFIG_SYS_BOOT_RAMDISK_HIGH
++/* #define CONFIG_SYS_BOOT_RAMDISK_HIGH */
+ 
+ #if defined(CONFIG_ARCH_LS1021A) || \
+ 	defined(CONFIG_CPU_PXA27X) || \
+diff --git a/board/samsung/gec210/gec210.c b/board/samsung/gec210/gec210.c
+index f5a6249..57e38c9 100755
+--- a/board/samsung/gec210/gec210.c
++++ b/board/samsung/gec210/gec210.c
+@@ -63,7 +63,8 @@ int board_init(void)
+ #ifdef CONFIG_DRIVER_DM9000
+ 	dm9000_pre_init();
+ #endif
+-	gd->bd->bi_arch_number = MACH_TYPE_SMDKC110;
++	/* bi_arch_number has set in setup_machine(). */
++	/* gd->bd->bi_arch_number = MACH_TYPE_SMDKC110; */
+ 	gd->bd->bi_boot_params = PHYS_SDRAM_1 + 0x100;
+ 
+ 	return 0;
+diff --git a/board/samsung/gec210/nand_cp.c b/board/samsung/gec210/nand_cp.c
+index ca764bc..f50e4cf 100755
+--- a/board/samsung/gec210/nand_cp.c
++++ b/board/samsung/gec210/nand_cp.c
+@@ -142,7 +142,6 @@ static int nandll_read_blocks (ulong dst_addr, ulong size)
+ 
+ int copy_uboot_to_ram (void)
+ {
+-	int large_block = 0;
+ 	int i;
+ 	vu_char id;
+ 
+@@ -158,9 +157,7 @@ int copy_uboot_to_ram (void)
+ 	id = NFDATA8_REG;
+ 	id = NFDATA8_REG;
+ 
+-	if (id > 0x80)
+-		large_block = 1;
+-	else
++	if (id <= 0x80)
+ 		return -1;	// Do not support small page (512B) any more
+ 
+ 	/* read NAND blocks */
+diff --git a/configs/gec210_defconfig b/configs/gec210_defconfig
+index 4f8d7a0..dc99f63 100755
+--- a/configs/gec210_defconfig
++++ b/configs/gec210_defconfig
+@@ -40,9 +40,9 @@ CONFIG_SYS_CACHELINE_SIZE=64
+ CONFIG_ENABLE_ARM_SOC_BOOT0_HOOK=y
+ # CONFIG_ARM_CORTEX_CPU_IS_UP is not set
+ CONFIG_USE_ARCH_MEMCPY=y
+-CONFIG_SPL_USE_ARCH_MEMCPY=y
++# CONFIG_SPL_USE_ARCH_MEMCPY is not set
+ CONFIG_USE_ARCH_MEMSET=y
+-CONFIG_SPL_USE_ARCH_MEMSET=y
++# CONFIG_SPL_USE_ARCH_MEMSET is not set
+ # CONFIG_ARM64_SUPPORT_AARCH32 is not set
+ # CONFIG_ARCH_AT91 is not set
+ # CONFIG_TARGET_EDB93XX is not set
+@@ -156,7 +156,6 @@ CONFIG_IDENT_STRING=" for GEC210"
+ #
+ # CONFIG_DEBUG_LL is not set
+ CONFIG_DEFAULT_DEVICE_TREE="s5pc1xx-gec210"
+-CONFIG_SMBIOS_PRODUCT_NAME="smdkc100"
+ CONFIG_DEBUG_UART=y
+ # CONFIG_AHCI is not set
+ 
+@@ -211,7 +210,7 @@ CONFIG_SD_BOOT=y
+ # CONFIG_SPI_BOOT is not set
+ CONFIG_BOOTDELAY=3
+ CONFIG_USE_BOOTARGS=y
+-CONFIG_BOOTARGS="root=/dev/mtdblock5 ubi.mtd=4 rootfstype=cramfs console=ttySAC0,115200n8 mem=128M  mtdparts=s3c-onenand:256k(bootloader),128k@0x40000(params),3m@0x60000(kernel),16m@0x360000(test),-(UBI)"
++CONFIG_BOOTARGS="root=/dev/mtdblock4 rootfstype=yaffs console=ttySAC0,115200n8 mem=512M mtdparts=s5p-nand:1m(boot),5m@0x100000(recovery),5m@0x600000(kernel),3m@0xb00000(ramdisk),-(rootfs)"
+ # CONFIG_USE_BOOTCOMMAND is not set
+ 
+ #
+@@ -291,18 +290,14 @@ CONFIG_CMD_CONSOLE=y
+ CONFIG_CMD_BOOTD=y
+ CONFIG_CMD_BOOTM=y
+ # CONFIG_CMD_BOOTZ is not set
+-CONFIG_CMD_BOOTEFI=y
+-CONFIG_CMD_BOOTEFI_HELLO_COMPILE=y
+-# CONFIG_CMD_BOOTEFI_HELLO is not set
+-# CONFIG_CMD_BOOTEFI_SELFTEST is not set
+ # CONFIG_CMD_BOOTMENU is not set
+ CONFIG_CMD_ELF=y
+ CONFIG_CMD_FDT=y
+ CONFIG_CMD_GO=y
+ CONFIG_CMD_RUN=y
+-CONFIG_CMD_IMI=y
++# CONFIG_CMD_IMI is not set
+ # CONFIG_CMD_IMLS is not set
+-CONFIG_CMD_XIMG=y
++# CONFIG_CMD_XIMG is not set
+ # CONFIG_CMD_POWEROFF is not set
+ # CONFIG_CMD_THOR_DOWNLOAD is not set
+ # CONFIG_CMD_ZBOOT is not set
+@@ -352,11 +347,7 @@ CONFIG_CMD_MEMORY=y
+ CONFIG_CMD_DM=y
+ # CONFIG_CMD_FDC is not set
+ # CONFIG_CMD_FLASH is not set
+-CONFIG_CMD_FPGA=y
+-# CONFIG_CMD_FPGA_LOADBP is not set
+-# CONFIG_CMD_FPGA_LOADFS is not set
+-# CONFIG_CMD_FPGA_LOADMK is not set
+-# CONFIG_CMD_FPGA_LOADP is not set
++# CONFIG_CMD_FPGA is not set
+ # CONFIG_CMD_FPGAD is not set
+ # CONFIG_CMD_FUSE is not set
+ # CONFIG_CMD_GPIO is not set
+@@ -454,13 +445,13 @@ CONFIG_CMD_MISC=y
+ # CONFIG_CMD_BTRFS is not set
+ # CONFIG_CMD_EXT2 is not set
+ # CONFIG_CMD_EXT4 is not set
+-CONFIG_CMD_FAT=y
++# CONFIG_CMD_FAT is not set
+ # CONFIG_CMD_FS_GENERIC is not set
+ # CONFIG_CMD_FS_UUID is not set
+ # CONFIG_CMD_JFFS2 is not set
+ CONFIG_CMD_MTDPARTS=y
+-CONFIG_MTDIDS_DEFAULT="onenand0=s3c-onenand"
+-CONFIG_MTDPARTS_DEFAULT="mtdparts=s3c-onenand:256k(bootloader),128k@0x40000(params),3m@0x60000(kernel),16m@0x360000(test),-(UBI)"
++CONFIG_MTDIDS_DEFAULT="nand0=s5p-nand"
++CONFIG_MTDPARTS_DEFAULT="mtdparts=s5p-nand:1m(boot),5m@0x100000(recovery),5m@0x600000(kernel),3m@0xb00000(ramdisk),-(rootfs)"
+ # CONFIG_CMD_MTDPARTS_SPREAD is not set
+ # CONFIG_CMD_REISER is not set
+ # CONFIG_CMD_SCSI is not set
+@@ -481,7 +472,7 @@ CONFIG_MTDPARTS_DEFAULT="mtdparts=s3c-onenand:256k(bootloader),128k@0x40000(para
+ #
+ CONFIG_PARTITIONS=y
+ # CONFIG_MAC_PARTITION is not set
+-CONFIG_DOS_PARTITION=y
++# CONFIG_DOS_PARTITION is not set
+ # CONFIG_ISO_PARTITION is not set
+ # CONFIG_AMIGA_PARTITION is not set
+ # CONFIG_EFI_PARTITION is not set
+@@ -504,12 +495,12 @@ CONFIG_MKIMAGE_DTC_PATH="dtc"
+ #
+ # Environment
+ #
+-CONFIG_ENV_IS_NOWHERE=y
++# CONFIG_ENV_IS_NOWHERE is not set
+ # CONFIG_ENV_IS_IN_EEPROM is not set
+ # CONFIG_ENV_IS_IN_FAT is not set
+ # CONFIG_ENV_IS_IN_FLASH is not set
+ # CONFIG_ENV_IS_IN_MMC is not set
+-# CONFIG_ENV_IS_IN_NAND is not set
++CONFIG_ENV_IS_IN_NAND=y
+ # CONFIG_ENV_IS_IN_NVRAM is not set
+ # CONFIG_ENV_IS_IN_ONENAND is not set
+ # CONFIG_ENV_IS_IN_REMOTE is not set
+@@ -881,9 +872,7 @@ CONFIG_DEBUG_UART_SHIFT=0
+ #
+ # CONFIG_FS_BTRFS is not set
+ # CONFIG_FS_CBFS is not set
+-CONFIG_FS_FAT=y
+-# CONFIG_FAT_WRITE is not set
+-CONFIG_FS_FAT_MAX_CLUSTSIZE=65536
++# CONFIG_FS_FAT is not set
+ # CONFIG_FS_JFFS2 is not set
+ # CONFIG_FS_CRAMFS is not set
+ # CONFIG_YAFFS2 is not set
+@@ -936,7 +925,5 @@ CONFIG_OF_LIBFDT=y
+ #
+ # System tables
+ #
+-CONFIG_GENERATE_SMBIOS_TABLE=y
+-CONFIG_SMBIOS_MANUFACTURER="samsung"
+-CONFIG_EFI_LOADER=y
++# CONFIG_EFI_LOADER is not set
+ # CONFIG_UNIT_TEST is not set
+diff --git a/include/configs/gec210.h b/include/configs/gec210.h
+index b95a833..62daaff 100755
+--- a/include/configs/gec210.h
++++ b/include/configs/gec210.h
+@@ -22,6 +22,8 @@
+ #if 0
+ #define CONFIG_GEC210		1	/* working with GEC210 */
+ #endif
++#define CONFIG_MACH_TYPE		MACH_TYPE_SMDKV210
++
+ 
+ #include <asm/arch/cpu.h>		/* get chip and board defs */
+ #include <asm/arch/s5pc110.h>
+@@ -63,30 +65,30 @@
+ #define CONFIG_MTD_DEVICE
+ #define CONFIG_MTD_PARTITIONS
+ 
+-#define CONFIG_BOOTCOMMAND	"run ubifsboot"
++#define CONFIG_BOOTCOMMAND	"run bootk"
+ 
+ #define CONFIG_RAMDISK_BOOT	"root=/dev/ram0 rw rootfstype=ext2" \
+ 				" console=ttySAC0,115200n8" \
+-				" mem=128M"
++				" mem=512M"
+ 
+ #define CONFIG_COMMON_BOOT	"console=ttySAC0,115200n8" \
+-				" mem=128M " \
++				" mem=512M " \
+ 				" " CONFIG_MTDPARTS_DEFAULT
+ 
+-#define CONFIG_UPDATEB	"updateb=onenand erase 0x0 0x40000;" \
+-			" onenand write 0x32008000 0x0 0x40000\0"
++#define CONFIG_UPDATEB	"updateb=nand erase.part boot;" \
++			"nand write 0x40000000 boot\0"
+ 
+ #define CONFIG_ENV_OVERWRITE
+ #define CONFIG_EXTRA_ENV_SETTINGS					\
+ 	CONFIG_UPDATEB \
+ 	"updatek=" \
+-		"onenand erase 0x60000 0x300000;" \
+-		"onenand write 0x31008000 0x60000 0x300000\0" \
++		"nand erase.part kernel;" \
++		"nand write 0x40000000 kernel\0" \
+ 	"updateu=" \
+ 		"onenand erase block 147-4095;" \
+ 		"onenand write 0x32000000 0x1260000 0x8C0000\0" \
+ 	"bootk=" \
+-		"onenand read 0x30007FC0 0x60000 0x300000;" \
++		"nand read 0x30007FC0 kernel;" \
+ 		"bootm 0x30007FC0\0" \
+ 	"flashboot=" \
+ 		"set bootargs root=/dev/mtdblock${bootblock} " \
+@@ -113,7 +115,7 @@
+ 		" initrd=0x33000000,8M ramdisk=8192\0" \
+ 	"rootfstype=cramfs\0" \
+ 	"mtdparts=" CONFIG_MTDPARTS_DEFAULT "\0" \
+-	"meminfo=mem=128M\0" \
++	"meminfo=mem=512M\0" \
+ 	"nfsroot=/nfsroot/arm\0" \
+ 	"bootblock=5\0" \
+ 	"ubiblock=4\0" \
+@@ -246,8 +248,8 @@
+ #define BOOT_SEC_DEV		0x5
+ 
+ #define CONFIG_ENV_SIZE			(128 << 10)	/* 128KiB, 0x20000 */
+-#define CONFIG_ENV_ADDR			(256 << 10)	/* 256KiB, 0x40000 */
+-#define CONFIG_ENV_OFFSET		(256 << 10)	/* 256KiB, 0x40000 */
++#define CONFIG_ENV_ADDR			(512 << 10)	/* 512KiB, 0x80000 */
++#define CONFIG_ENV_OFFSET		(512 << 10)	/* 512KiB, 0x80000 */
+ 
+ /* nand copy size from nand to DRAM.*/
+ #define	COPY_BL1_SIZE		(8 << 10)	/* for irom's BL0 copy */
