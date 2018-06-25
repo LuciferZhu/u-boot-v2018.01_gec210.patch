@@ -1,0 +1,187 @@
+diff --git a/cmd/Kconfig b/cmd/Kconfig
+index c033223..f2883cc 100755
+--- a/cmd/Kconfig
++++ b/cmd/Kconfig
+@@ -774,6 +774,12 @@ config CMD_NAND_TRIMFFS
+ 	help
+ 	  Allows one to skip empty pages when flashing something on a NAND.
+ 
++config CMD_NAND_YAFFS
++	bool "nand write.yaffs2"
++	default y
++	help
++	  Allows one to misalign write pages when flashing something on a NAND.
++
+ config CMD_NAND_LOCK_UNLOCK
+ 	bool "nand lock/unlock"
+ 	help
+diff --git a/cmd/nand.c b/cmd/nand.c
+index 234a7b7..65d3da4 100755
+--- a/cmd/nand.c
++++ b/cmd/nand.c
+@@ -643,6 +643,16 @@ static int do_nand(cmd_tbl_t *cmdtp, int flag, int argc, char * const argv[])
+ 						maxsize, (u_char *)addr,
+ 						WITH_DROP_FFS | WITH_WR_VERIFY);
+ #endif
++#ifdef CONFIG_CMD_NAND_YAFFS
++		} else if (!strcmp(s, ".yaffs2")) {
++			if (read) {
++				printf("Unknown nand command suffix '%s'\n", s);
++				return 1;
++			}
++			ret = nand_write_skip_bad(mtd, off, &rwsize, NULL,
++						maxsize, (u_char *)addr,
++						WITH_YAFFS_OOB);
++#endif
+ 		} else if (!strcmp(s, ".oob")) {
+ 			/* out-of-band data */
+ 			mtd_oob_ops_t ops = {
+@@ -820,6 +830,11 @@ static char nand_help_text[] =
+ 	"    'addr', skipping bad blocks and dropping any pages at the end\n"
+ 	"    of eraseblocks that contain only 0xFF\n"
+ #endif
++#ifdef CONFIG_CMD_NAND_YAFFS
++	"nand write.yaffs2 - addr off|partition size\n"
++	"    write ‘size‘ bytes starting at offset ‘off‘ with yaffs format\n"
++	"    from memory address ‘addr‘, skipping bad blocks.\n"
++#endif
+ 	"nand erase[.spread] [clean] off size - erase 'size' bytes "
+ 	"from offset 'off'\n"
+ 	"    With '.spread', erase enough for given file size, otherwise,\n"
+diff --git a/configs/gec210_defconfig b/configs/gec210_defconfig
+index e4f7816..85f8dd7 100755
+--- a/configs/gec210_defconfig
++++ b/configs/gec210_defconfig
+@@ -362,6 +362,7 @@ CONFIG_CMD_LOADS=y
+ # CONFIG_CMD_MMC is not set
+ CONFIG_CMD_NAND=y
+ # CONFIG_CMD_NAND_TRIMFFS is not set
++CONFIG_CMD_NAND_YAFFS=y
+ # CONFIG_CMD_NAND_LOCK_UNLOCK is not set
+ # CONFIG_CMD_NAND_TORTURE is not set
+ # CONFIG_CMD_MMC_SPI is not set
+diff --git a/drivers/mtd/nand/nand_util.c b/drivers/mtd/nand/nand_util.c
+index 9c8a373..1e94f23 100755
+--- a/drivers/mtd/nand/nand_util.c
++++ b/drivers/mtd/nand/nand_util.c
+@@ -1,4 +1,4 @@
+-/*
++﻿/*
+  * drivers/mtd/nand/nand_util.c
+  *
+  * Copyright (C) 2006 by Weiss-Electronic GmbH.
+@@ -581,7 +581,22 @@ int nand_write_skip_bad(struct mtd_info *mtd, loff_t offset, size_t *length,
+ 	if (actual)
+ 		*actual = 0;
+ 
+-	blocksize = mtd->erasesize;
++#ifdef CONFIG_CMD_NAND_YAFFS
++	if (flags & WITH_YAFFS_OOB) {
++		if (flags & ~WITH_YAFFS_OOB)
++			return -EINVAL;
++
++		int pages;
++		pages = mtd->erasesize / mtd->writesize;
++		blocksize = (pages * mtd->oobsize) + mtd->erasesize;
++		if (*length % (mtd->writesize + mtd->oobsize)) {
++			printf ("Attempt to write incomplete page"
++				" in yaffs mode\n");
++			return -EINVAL;
++		}
++	} else
++#endif
++		blocksize = mtd->erasesize;
+ 
+ 	/*
+ 	 * nand_write() handles unaligned, partial page writes.
+@@ -617,7 +632,7 @@ int nand_write_skip_bad(struct mtd_info *mtd, loff_t offset, size_t *length,
+ 		return -EFBIG;
+ 	}
+ 
+-	if (!need_skip && !(flags & WITH_DROP_FFS)) {
++	if (!need_skip && !(flags & WITH_DROP_FFS) && !(flags & WITH_YAFFS_OOB)) {
+ 		rval = nand_write(mtd, offset, length, buffer);
+ 
+ 		if ((flags & WITH_WR_VERIFY) && !rval)
+@@ -650,22 +665,52 @@ int nand_write_skip_bad(struct mtd_info *mtd, loff_t offset, size_t *length,
+ 		else
+ 			write_size = blocksize - block_offset;
+ 
+-		truncated_write_size = write_size;
++#ifdef CONFIG_CMD_NAND_YAFFS
++		if (flags & WITH_YAFFS_OOB) {
++			int page, pages;
++			size_t pagesize = mtd->writesize;
++			size_t pagesize_oob = pagesize + mtd->oobsize;
++			struct mtd_oob_ops ops;
++
++			ops.len = pagesize;
++			ops.ooblen = mtd->oobsize;
++			ops.mode = MTD_OPS_AUTO_OOB;
++			ops.ooboffs = 0;
++
++			pages = write_size / pagesize_oob;
++			for (page = 0; page < pages; page++) {
++				WATCHDOG_RESET();
++
++				ops.datbuf = p_buffer;
++				ops.oobbuf = ops.datbuf + pagesize;
++
++				rval = mtd->_write_oob(mtd, offset, &ops);
++				if (rval != 0)
++					break;
++
++				offset += pagesize;
++				p_buffer += pagesize_oob;
++			}
++		} else
++#endif
++		{
++			truncated_write_size = write_size;
+ #ifdef CONFIG_CMD_NAND_TRIMFFS
+-		if (flags & WITH_DROP_FFS)
+-			truncated_write_size = drop_ffs(mtd, p_buffer,
+-					&write_size);
++			if (flags & WITH_DROP_FFS)
++				truncated_write_size = drop_ffs(mtd, p_buffer,
++						&write_size);
+ #endif
+ 
+-		rval = nand_write(mtd, offset, &truncated_write_size,
+-				p_buffer);
++			rval = nand_write(mtd, offset, &truncated_write_size,
++					p_buffer);
+ 
+-		if ((flags & WITH_WR_VERIFY) && !rval)
+-			rval = nand_verify(mtd, offset,
+-				truncated_write_size, p_buffer);
++			if ((flags & WITH_WR_VERIFY) && !rval)
++				rval = nand_verify(mtd, offset,
++					truncated_write_size, p_buffer);
+ 
+-		offset += write_size;
+-		p_buffer += write_size;
++			offset += write_size;
++			p_buffer += write_size;
++		}
+ 
+ 		if (rval != 0) {
+ 			printf("NAND write to offset %llx failed %d\n",
+diff --git a/include/nand.h b/include/nand.h
+index cead563..40ad5bf 100755
+--- a/include/nand.h
++++ b/include/nand.h
+@@ -1,4 +1,4 @@
+-/*
++﻿/*
+  * (C) Copyright 2005
+  * 2N Telekomunikace, a.s. <www.2n.cz>
+  * Ladislav Michl <michl@2n.cz>
+@@ -103,6 +103,7 @@ int nand_read_skip_bad(struct mtd_info *mtd, loff_t offset, size_t *length,
+ 
+ #define WITH_DROP_FFS	(1 << 0) /* drop trailing all-0xff pages */
+ #define WITH_WR_VERIFY	(1 << 1) /* verify data was written correctly */
++#define WITH_YAFFS_OOB	(1 << 2)
+ 
+ int nand_write_skip_bad(struct mtd_info *mtd, loff_t offset, size_t *length,
+ 			size_t *actual, loff_t lim, u_char *buffer, int flags);
